@@ -175,19 +175,23 @@ def is_future(row, now):
         return False
 
 
-def build_step_events(df_src, role):
+def build_step_events(df_src, role, buffer_per_maint=0):
     """
     Tạo danh sách (time, +1/-1) cho step-chart manpower.
-    Tính toán nhu cầu dựa trên số lượng nhân sự được gán (nếu có).
+    Tính toán nhu cầu dựa trên số lượng nhân sự được gán.
     Mỗi chuyến bay mặc định cần ít nhất 1 người.
+    buffer_per_maint: Số lượng người cần thêm cho các chuyến được đánh dấu MAINT.
     """
     events = []
     for _, r in df_src.iterrows():
         if pd.notnull(r['START_DT']) and pd.notnull(r['END_DT']):
-            # Đếm số lượng nhân sự đã gán cho chuyến bay này
+            # Đếm số lượng nhân sự đã gán
             assigned_names = process_names(str(r[role])) if pd.notnull(r[role]) else []
-            # Nhu cầu là số người đã gán, hoặc tối thiểu là 1 nếu chưa gán
+            # Nhu cầu = số người đã gán (hoặc 1 nếu trống) + số người dự phòng nếu là MAINT
             demand = max(len(assigned_names), 1)
+            if r.get('MAINT', False):
+                demand += buffer_per_maint
+            
             events.append((r['START_DT'].to_pydatetime(),  demand))
             events.append((r['END_DT'].to_pydatetime(),   -demand))
     events.sort()
@@ -267,6 +271,12 @@ with st.sidebar:
     mech_opt = [""] + process_names(raw_mech)
     num_crs  = len(crs_opt)  - 1
     num_mech = len(mech_opt) - 1
+
+    st.divider()
+    st.subheader("🔮 Dự toán nhân lực (Simulation)")
+    st.caption("Dự phòng nhân lực cho các chuyến Bảo dưỡng (Maint)")
+    buffer_crs = st.number_input("Thêm CRS/chuyến bảo dưỡng:", min_value=0, max_value=3, value=1)
+    buffer_mech = st.number_input("Thêm MECH/chuyến bảo dưỡng:", min_value=0, max_value=5, value=2)
 
     if st.button("🗑️ Reset Toàn Bộ"):
         st.session_state.clear()
@@ -487,10 +497,10 @@ if raw_input:
         # ═══════════════════════════════════════════════════════════
         # MANPOWER REPORT — CRS & MECH riêng biệt
         # ═══════════════════════════════════════════════════════════
-        st.subheader("📊 Manpower Report")
+        st.subheader("📊 Manpower Report & Simulation")
 
-        df_crs_step  = build_step_events(df, 'CRS_ASSIGN')
-        df_mech_step = build_step_events(df, 'MECH_ASSIGN')
+        df_crs_step  = build_step_events(df, 'CRS_ASSIGN', buffer_crs)
+        df_mech_step = build_step_events(df, 'MECH_ASSIGN', buffer_mech)
 
         def get_peak(df_step):
             if df_step.empty: return 0, None
