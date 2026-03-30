@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="ACD DAD v3.61 - FULL OPTION", layout="wide")
+st.set_page_config(page_title="ACD DAD v3.62 - FULL SYSTEM", layout="wide")
 
 # Lấy giờ hiện tại chuẩn Việt Nam (ICT)
 now_vn = datetime.now()
@@ -78,7 +78,7 @@ def suggest_replacement(df, idx, role, options):
     return None
 
 # ═══════════════════════════════════════════════
-# 2. GIAO DIỆN CHÍNH
+# 2. GIAO DIỆN & SIDEBAR
 # ═══════════════════════════════════════════════
 
 with st.sidebar:
@@ -93,7 +93,7 @@ with st.sidebar:
     num_c, num_m = len(crs_opt)-1, len(mech_opt)-1
     if st.button("🗑️ Reset"): st.session_state.clear(); st.rerun()
 
-st.title("🚀 ACD DAD v3.61 - FULL SYSTEM")
+st.title("🚀 ACD DAD v3.62")
 st.caption(f"Update: {now_vn.strftime('%d/%m/%Y %H:%M:%S')} (ICT)")
 
 raw_input = st.text_area("Dán lịch bay...", height=80)
@@ -110,10 +110,28 @@ if raw_input:
         df = st.session_state.df_final
         df['DURATION'] = df.apply(lambda r: int((r['END_DT']-r['START_DT']).total_seconds()/60) if pd.notnull(r['START_DT']) else 0, axis=1)
 
-        # TOOLBAR
+        # ─── TOOLBAR (ĐÃ KHÔI PHỤC ĐẦY ĐỦ) ───
         c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("📋 1. Copy Data gốc", use_container_width=True):
+                if 'CRS' in df.columns: df['CRS_ASSIGN'] = df['CRS'].astype(str).replace('nan', '')
+                if 'MECH' in df.columns: df['MECH_ASSIGN'] = df['MECH'].astype(str).replace('nan', '')
+                st.rerun()
+        with c2:
+            if st.button("🪄 2. Tự chia lịch (Tương lai)", use_container_width=True):
+                c_load = {n: 0 for n in crs_opt if n}
+                m_load = {n: 0 for n in mech_opt if n}
+                for idx, row in df.iterrows():
+                    if not is_future(row, now_vn): continue # Bảo vệ quá khứ
+                    for n in sorted(c_load, key=c_load.get):
+                        if df[(df['CRS_ASSIGN']==n) & (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])].empty:
+                            df.at[idx, 'CRS_ASSIGN'] = n; c_load[n] += row['DURATION']; break
+                    for n in sorted(m_load, key=m_load.get):
+                        if df[(df['MECH_ASSIGN']==n) & (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])].empty:
+                            df.at[idx, 'MECH_ASSIGN'] = n; m_load[n] += row['DURATION']; break
+                st.rerun()
         with c3:
-            if st.button("🔍 Fix Tương Lai & Gợi ý", use_container_width=True):
+            if st.button("🔍 3. Fix Tương Lai & Gợi ý", use_container_width=True):
                 for idx, row in df.iterrows():
                     if not is_future(row, now_vn): continue
                     for role, opt in [('CRS_ASSIGN', crs_opt[1:]), ('MECH_ASSIGN', mech_opt[1:])]:
@@ -144,22 +162,21 @@ if raw_input:
             hide_index=True, use_container_width=True
         )
 
-        # ─── 📊 MANPOWER (ĐÃ KHÔI PHỤC) ───
+        # ─── 📊 MANPOWER REPORT ───
         st.divider()
-        st.subheader("📊 GIẢI TRÌNH NHÂN LỰC (MANPOWER)")
+        st.subheader("📊 Giải trình nhân lực")
         col_c, col_m = st.columns(2)
         for col, role, num, label, color in [(col_c, 'CRS_ASSIGN', num_c, 'CRS', '#A52A2A'), (col_m, 'MECH_ASSIGN', num_m, 'MECH', '#1964B4')]:
             with col:
                 events = []
                 for _, r in df.iterrows():
-                    if pd.notnull(r['START_DT']) and r[role]:
+                    if pd.notnull(r['START_DT']) and r[role] and str(r[role]) != "":
                         events.append((r['START_DT'].to_pydatetime(), 1))
                         events.append((r['END_DT'].to_pydatetime(), -1))
                 events.sort()
                 curr, points = 0, []
                 for t, v in events:
                     points.append({'Time': t, 'Count': curr}); curr += v; points.append({'Time': t, 'Count': curr})
-                
                 if points:
                     df_p = pd.DataFrame(points)
                     fig_p = go.Figure()
@@ -169,39 +186,39 @@ if raw_input:
                     fig_p.update_layout(height=220, title=f"Nhu cầu {label}", margin=dict(l=10,r=10,t=30,b=10))
                     st.plotly_chart(fig_p, use_container_width=True)
 
-        # ─── 👨‍🔧 TIMELINE (ĐÃ KHÔI PHỤC) ───
+        # ─── 👨‍🔧 TIMELINE ───
         st.subheader("👨‍🔧 Timeline Chi tiết")
         tl_data = []
         for role, label in [('CRS_ASSIGN','CRS'), ('MECH_ASSIGN','MECH')]:
             for idx, r in df.iterrows():
                 if pd.notnull(r['START_DT']) and r[role]:
-                    tl_data.append({"Nhân viên": r[role], "Bắt đầu": r['START_DT'], "Kết thúc": r['END_DT'], "Loại": label, "Chuyến": r.get('FLIGHT','')})
+                    tl_data.append({"NV": r[role], "Bắt đầu": r['START_DT'], "Kết thúc": r['END_DT'], "Loại": label, "Flight": r.get('FLIGHT','')})
         if tl_data:
-            fig_g = px.timeline(pd.DataFrame(tl_data), x_start="Bắt đầu", x_end="Kết thúc", y="Nhân viên", color="Loại")
+            fig_g = px.timeline(pd.DataFrame(tl_data), x_start="Bắt đầu", x_end="Kết thúc", y="NV", color="Loại")
             fig_g.add_vline(x=now_ts, line_width=4, line_color="red")
             fig_g.update_yaxes(autorange="reversed")
             fig_g.update_layout(height=400)
             st.plotly_chart(fig_g, use_container_width=True)
 
-        # ─── 📈 BAR CHART THỐNG KÊ (ĐÃ KHÔI PHỤC) ───
+        # ─── 📈 BAR CHART ───
         st.subheader("📊 Thống kê tải công việc")
         stats = []
         for n in crs_opt[1:]:
-            d_done = df[(df['CRS_ASSIGN']==n) & (df['START_DT'] <= now_vn)]['DURATION'].sum()/60
-            d_rem = df[(df['CRS_ASSIGN']==n) & (df['START_DT'] > now_vn)]['DURATION'].sum()/60
-            stats.append({'Nhân viên': n, 'Role': 'CRS', 'Đã làm (h)': d_done, 'Còn lại (h)': d_rem})
+            d_done = df[(df['CRS_ASSIGN']==n) & (~is_future(df.loc[df.index], now_vn))]['DURATION'].sum()/60
+            d_rem = df[(df['CRS_ASSIGN']==n) & (is_future(df.loc[df.index], now_vn))]['DURATION'].sum()/60
+            stats.append({'NV': n, 'Role': 'CRS', 'Đã làm (h)': d_done, 'Còn lại (h)': d_rem})
         for n in mech_opt[1:]:
-            d_done = df[(df['MECH_ASSIGN']==n) & (df['START_DT'] <= now_vn)]['DURATION'].sum()/60
-            d_rem = df[(df['MECH_ASSIGN']==n) & (df['START_DT'] > now_vn)]['DURATION'].sum()/60
-            stats.append({'Nhân viên': n, 'Role': 'MECH', 'Đã làm (h)': d_done, 'Còn lại (h)': d_rem})
+            d_done = df[(df['MECH_ASSIGN']==n) & (~is_future(df.loc[df.index], now_vn))]['DURATION'].sum()/60
+            d_rem = df[(df['MECH_ASSIGN']==n) & (is_future(df.loc[df.index], now_vn))]['DURATION'].sum()/60
+            stats.append({'NV': n, 'Role': 'MECH', 'Đã làm (h)': d_done, 'Còn lại (h)': d_rem})
         
         df_stats = pd.DataFrame(stats)
         if not df_stats.empty:
             fig_b = go.Figure()
             for r, c in [('CRS','#1f77b4'),('MECH','#ff7f0e')]:
                 sub = df_stats[df_stats['Role']==r]
-                fig_b.add_trace(go.Bar(name=f"{r}-đã làm", x=sub['Nhân viên'], y=sub['Đã làm (h)'], marker_color=c, opacity=0.9))
-                fig_b.add_trace(go.Bar(name=f"{r}-còn lại", x=sub['Nhân viên'], y=sub['Còn lại (h)'], marker_color=c, opacity=0.35))
+                fig_b.add_trace(go.Bar(name=f"{r}-xong", x=sub['NV'], y=sub['Đã làm (h)'], marker_color=c, opacity=0.9))
+                fig_b.add_trace(go.Bar(name=f"{r}-chờ", x=sub['NV'], y=sub['Còn lại (h)'], marker_color=c, opacity=0.35))
             fig_b.update_layout(barmode='stack', height=300)
             st.plotly_chart(fig_b, use_container_width=True)
 
