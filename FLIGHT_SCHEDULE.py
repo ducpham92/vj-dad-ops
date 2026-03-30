@@ -5,9 +5,9 @@ from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="ACD DAD v3.24 - Full Report", layout="wide")
+st.set_page_config(page_title="ACD DAD v3.25 - Final Report", layout="wide")
 
-# --- 1. HÀM LOGIC ---
+# --- 1. HÀM XỬ LÝ ---
 def parse_raw_data(data_string):
     if not data_string.strip(): return None
     try:
@@ -50,26 +50,26 @@ def check_overlap(row, current_df, role):
 
 # --- 2. SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ Nhân sự")
+    st.header("⚙️ Cấu hình Nhân sự")
     def process_names(s):
         if not s: return []
         for char in ['\n', '\t']: s = s.replace(char, ',')
         return [x.strip() for x in s.split(',') if x.strip()]
-    raw_crs = st.text_area("CRS:", value="Hưng, Hoàng Tr, Cường VII, Thắng VII, Trung")
-    raw_mech = st.text_area("MECH:", value="Go, Tài, Phú, Trường, Huy VII")
-    crs_options = [""] + process_names(raw_crs)
-    mech_options = [""] + process_names(raw_mech)
-    num_crs_cap = len(crs_options) - 1
+    raw_crs = st.text_area("Danh sách CRS:", value="Hưng, Hoàng Tr, Cường VII, Thắng VII, Trung")
+    raw_mech = st.text_area("Danh sách MECH:", value="Go, Tài, Phú, Trường, Huy VII")
+    crs_opt = [""] + process_names(raw_crs)
+    mech_opt = [""] + process_names(raw_mech)
+    num_crs_now = len(crs_opt) - 1
     if st.button("🗑️ Reset App"):
         st.session_state.clear()
         st.rerun()
 
 # --- 3. GIAO DIỆN CHÍNH ---
-st.title("🚁 ACD DAD v3.24 - FULL DASHBOARD")
-raw_input = st.text_area("Dán lịch bay vào đây...", height=100)
+st.title("🚁 ACD DAD v3.25 - KIỂM TRA ĐIỀU HÀNH")
+raw_pasted = st.text_area("Dán dữ liệu lịch bay (Ctrl + Enter)...", height=80)
 
-if raw_input:
-    df_raw = parse_raw_data(raw_input)
+if raw_pasted:
+    df_raw = parse_raw_data(raw_pasted)
     if df_raw is not None:
         if 'df_final' not in st.session_state:
             res = df_raw.apply(lambda r: pd.Series(calculate_work_window(r)), axis=1)
@@ -80,21 +80,21 @@ if raw_input:
         df = st.session_state.df_final
         df['DURATION'] = df.apply(lambda r: int((r['END_DT'] - r['START_DT']).total_seconds()/60) if pd.notnull(r['START_DT']) else 0, axis=1)
         
-        # Check lỗi riêng biệt
-        df['CHECK_CRS'] = df.apply(lambda r: "⚠️ TRÙNG" if check_overlap(r, df, 'CRS_ASSIGN') else ("✅ OK" if r['CRS_ASSIGN'] else "⚪ Trống"), axis=1)
-        df['CHECK_MECH'] = df.apply(lambda r: "⚠️ TRÙNG" if check_overlap(r, df, 'MECH_ASSIGN') else ("✅ OK" if r['MECH_ASSIGN'] else "⚪ Trống"), axis=1)
+        # Check lỗi 2 cột
+        df['CHECK_CRS'] = df.apply(lambda r: "⚠️ TRÙNG" if check_overlap(r, df, 'CRS_ASSIGN') else ("✅ OK" if r['CRS_ASSIGN'] else "⚪"), axis=1)
+        df['CHECK_MECH'] = df.apply(lambda r: "⚠️ TRÙNG" if check_overlap(r, df, 'MECH_ASSIGN') else ("✅ OK" if r['MECH_ASSIGN'] else "⚪"), axis=1)
 
-        # Bộ công cụ
-        st.subheader("🛠️ Bộ Công Cụ")
-        t1, t2, t3 = st.columns(3)
-        with t1:
-            if st.button("📋 1. Copy từ Data gốc", use_container_width=True):
+        # Công cụ
+        st.subheader("🛠️ Công Cụ")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("📋 1. Copy Data gốc", use_container_width=True):
                 if 'CRS' in df.columns: df['CRS_ASSIGN'] = df['CRS'].astype(str).replace('nan', '')
                 if 'MECH' in df.columns: df['MECH_ASSIGN'] = df['MECH'].astype(str).replace('nan', '')
                 st.rerun()
-        with t2:
-            if st.button("🪄 2. Tự động chia mới", use_container_width=True):
-                c_l = {n: 0 for n in crs_options if n}; m_l = {n: 0 for n in mech_options if n}
+        with c2:
+            if st.button("🪄 2. Tự chia mới", use_container_width=True):
+                c_l = {n: 0 for n in crs_opt if n}; m_l = {n: 0 for n in mech_opt if n}
                 for idx, row in df.iterrows():
                     for n in sorted(c_l, key=c_l.get):
                         if df[(df['CRS_ASSIGN']==n) & (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])].empty:
@@ -103,10 +103,10 @@ if raw_input:
                         if df[(df['MECH_ASSIGN']==n) & (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])].empty:
                             df.at[idx, 'MECH_ASSIGN'] = n; m_l[n] += row['DURATION']; break
                 st.rerun()
-        with t3:
+        with c3:
             if st.button("🔍 3. Sửa trùng lịch", use_container_width=True):
-                c_l = {n: df[df['CRS_ASSIGN']==n]['DURATION'].sum() for n in crs_options if n}
-                m_l = {n: df[df['MECH_ASSIGN']==n]['DURATION'].sum() for n in mech_options if n}
+                c_l = {n: df[df['CRS_ASSIGN']==n]['DURATION'].sum() for n in crs_opt if n}
+                m_l = {n: df[df['MECH_ASSIGN']==n]['DURATION'].sum() for n in mech_opt if n}
                 for idx, row in df.iterrows():
                     for role, l_dict in [('CRS_ASSIGN', c_l), ('MECH_ASSIGN', m_l)]:
                         if check_overlap(row, df, role) or not row[role]:
@@ -115,15 +115,15 @@ if raw_input:
                                     df.at[idx, role] = cand; l_dict[cand] += row['DURATION']; break
                 st.rerun()
 
-        # Bảng dữ liệu
-        st.subheader("📊 Bảng Phân Công Chi Tiết")
+        # Bảng editor
+        st.subheader("📊 Bảng Điều Phối")
         edited_df = st.data_editor(
             df,
             column_config={
                 "CHECK_CRS": st.column_config.TextColumn("Lỗi CRS", width="small"),
                 "CHECK_MECH": st.column_config.TextColumn("Lỗi MECH", width="small"),
-                "CRS_ASSIGN": st.column_config.SelectboxColumn("Phân CRS", options=crs_options),
-                "MECH_ASSIGN": st.column_config.SelectboxColumn("Phân MECH", options=mech_options),
+                "CRS_ASSIGN": st.column_config.SelectboxColumn("Phân CRS", options=crs_opt),
+                "MECH_ASSIGN": st.column_config.SelectboxColumn("Phân MECH", options=mech_opt),
                 "END_DT": st.column_config.DatetimeColumn("Kết thúc", format="HH:mm"),
             },
             disabled=[c for c in df.columns if c not in ["CRS_ASSIGN", "MECH_ASSIGN", "END_DT", "NOTES"]],
@@ -131,27 +131,30 @@ if raw_input:
         )
         st.session_state.df_final = edited_df
 
-        # --- PHẦN 1: TIMELINE NHÂN VIÊN ---
+        # --- PHẦN 1: TIMELINE NHÂN VIÊN (PHẢI CÓ) ---
         st.divider()
-        st.subheader("👨‍🔧 Timeline Công Việc & Now-line")
+        st.subheader("👨‍🔧 Timeline & Now-line (Trực quan)")
         now = datetime.now()
         c_data = []
         for role in ['CRS_ASSIGN', 'MECH_ASSIGN']:
             for _, r in st.session_state.df_final.iterrows():
-                if pd.notnull(r['START_DT']) and r[role] and str(r[role]) != 'nan':
-                    c_data.append({"Nhân viên": r[role], "Bắt đầu": r['START_DT'], "Kết thúc": r['END_DT'], "Loại": role[:3], "Tàu": r['REG']})
+                val = str(r[role])
+                if pd.notnull(r['START_DT']) and val != "" and val.lower() != 'nan':
+                    c_data.append({"Nhân viên": r[role], "Bắt đầu": r['START_DT'], "Kết thúc": r['END_DT'], "Loại": role[:3]})
         
         if c_data:
             df_g = pd.DataFrame(c_data)
-            t_min = df_g['Bắt đầu'].min() - timedelta(minutes=30)
-            t_max = df_g['Kết thúc'].max() + timedelta(minutes=30)
-            fig_g = px.timeline(df_g, x_start="Bắt đầu", x_end="Kết thúc", y="Nhân viên", color="Loại", hover_data=["Tàu"], range_x=[t_min, t_max])
-            fig_g.add_vline(x=now, line_width=4, line_color="red", line_dash="solid")
+            t_min = df_g['Bắt đầu'].min() - timedelta(minutes=60)
+            t_max = df_g['Kết thúc'].max() + timedelta(minutes=60)
+            fig_g = px.timeline(df_g, x_start="Bắt đầu", x_end="Kết thúc", y="Nhân viên", color="Loại", range_x=[t_min, t_max])
+            fig_g.add_vline(x=now, line_width=4, line_color="red")
             fig_g.update_yaxes(autorange="reversed")
             st.plotly_chart(fig_g, use_container_width=True)
+        else:
+            st.info("Hãy phân công nhân sự để hiển thị Timeline.")
 
-        # --- PHẦN 2: BÁO CÁO MANPOWER (GIẢI TRÌNH) ---
-        st.subheader("📋 Phân tích Nhu cầu Nhân lực (Manpower)")
+        # --- PHẦN 2: BÁO CÁO MANPOWER (GIẢI TRÌNH v3.12) ---
+        st.subheader("📋 Giải trình Nhân lực (Manpower)")
         events = []
         for _, r in st.session_state.df_final.iterrows():
             if pd.notnull(r['START_DT']):
@@ -168,26 +171,24 @@ if raw_input:
         if points:
             df_p = pd.DataFrame(points)
             fig_p = go.Figure()
-            fig_p.add_trace(go.Scatter(x=df_p['Time'], y=df_p['Count'], fill='tozeroy', fillcolor='rgba(165, 42, 42, 0.1)', line=dict(color='#A52A2A', shape='vh'), name='Cần thiết'))
-            fig_p.add_trace(go.Scatter(x=[df_p['Time'].min(), df_p['Time'].max()], y=[num_crs_cap, num_crs_cap], line=dict(color='green', dash='dash', width=3), name=f'Hiện có ({num_crs_cap})'))
+            fig_p.add_trace(go.Scatter(x=df_p['Time'], y=df_p['Count'], fill='tozeroy', fillcolor='rgba(165, 42, 42, 0.1)', line=dict(color='#A52A2A', shape='vh'), name='Nhu cầu'))
+            fig_p.add_trace(go.Scatter(x=[df_p['Time'].min(), df_p['Time'].max()], y=[num_crs_now, num_crs_now], line=dict(color='green', dash='dash', width=3), name='Hiện có'))
             fig_p.add_vline(x=now, line_width=2, line_color="red", line_dash="dot")
-            fig_p.update_layout(height=300)
             st.plotly_chart(fig_p, use_container_width=True)
-            
             peak_str = peak_t.strftime("%H:%M") if peak_t else "N/A"
-            st.info(f"**Giải trình:** Lúc cao điểm **{peak_str}**, chúng ta cần **{max_req}** người. Hiện có **{num_crs_cap}** người. Trạng thái: **{'⚠️ THIẾU' if max_req > num_crs_cap else '✅ ĐỦ'}**.")
+            st.success(f"**Giải trình sếp:** Cao điểm lúc {peak_str} cần {max_req} người. Ca trực có {num_crs_now} người.")
 
-        # --- PHẦN 3: THỐNG KÊ GIỜ LÀM (WORKLOAD) ---
+        # --- PHẦN 3: THỐNG KÊ PHÚT LÀM (WORKLOAD) ---
         st.divider()
         st.subheader("📈 Thống kê khối lượng công việc (Phút)")
         w1, w2 = st.columns(2)
         with w1:
-            st.markdown("**Tổng phút CRS:**")
+            st.write("**Tổng phút CRS:**")
             for n in process_names(raw_crs):
                 m = st.session_state.df_final[st.session_state.df_final['CRS_ASSIGN']==n]['DURATION'].sum()
                 st.write(f"- {n}: `{int(m)}` phút")
         with w2:
-            st.markdown("**Tổng phút MECH:**")
+            st.write("**Tổng phút MECH:**")
             for n in process_names(raw_mech):
                 m = st.session_state.df_final[st.session_state.df_final['MECH_ASSIGN']==n]['DURATION'].sum()
                 st.write(f"- {n}: `{int(m)}` phút")
