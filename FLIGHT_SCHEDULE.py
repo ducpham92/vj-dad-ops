@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="ACD DAD v3.56", layout="wide")
+st.set_page_config(page_title="ACD DAD v3.57 (Optimized)", layout="wide")
 
 now_vn = datetime.now()
 now_ts = now_vn.timestamp() * 1000
@@ -146,22 +146,16 @@ def auto_assign_fairly(df, crs_names, mech_names):
     valid_df = df[df['START_DT'].notna()].sort_values('START_DT').copy()
     
     # Khởi tạo bảng theo dõi tải trọng
-    # {name: {'duration': 0, 'count': 0}}
     crs_load = {n: {'duration': 0, 'count': 0} for n in crs_names if n}
     mech_load = {n: {'duration': 0, 'count': 0} for n in mech_names if n}
 
     def get_best_person(current_row, role_col, load_dict):
         start, end = current_row['START_DT'], current_row['END_DT']
-        
-        # Sắp xếp nhân viên theo: 
-        # - Tổng thời gian làm việc (ưu tiên 1)
-        # - Số lượng chuyến đã làm (ưu tiên 2)
+        # Sắp xếp nhân viên theo tải trọng: duration trước, count sau
         sorted_names = sorted(load_dict.keys(), 
                              key=lambda x: (load_dict[x]['duration'], load_dict[x]['count']))
         
         for name in sorted_names:
-            # Kiểm tra xem người này có đang bận trong khung giờ [start, end] không
-            # Kiểm tra trên df gốc (đã được cập nhật dần)
             conflict = df[
                 (df[role_col] == name) & 
                 (df['START_DT'] < end) & 
@@ -171,12 +165,12 @@ def auto_assign_fairly(df, crs_names, mech_names):
                 return name
         return ""
 
-    # Xóa phân công cũ trước khi chia mới (tùy chọn, ở đây ta ghi đè)
     for idx, row in valid_df.iterrows():
         # Phân công CRS
         best_crs = get_best_person(row, 'CRS_ASSIGN', crs_load)
         if best_crs:
             df.at[idx, 'CRS_ASSIGN'] = best_crs
+            df.at[idx, 'STATUS'] = "🪄 Auto"
             crs_load[best_crs]['duration'] += row.get('DURATION', 0)
             crs_load[best_crs]['count'] += 1
             
@@ -184,6 +178,7 @@ def auto_assign_fairly(df, crs_names, mech_names):
         best_mech = get_best_person(row, 'MECH_ASSIGN', mech_load)
         if best_mech:
             df.at[idx, 'MECH_ASSIGN'] = best_mech
+            df.at[idx, 'STATUS'] = "🪄 Auto"
             mech_load[best_mech]['duration'] += row.get('DURATION', 0)
             mech_load[best_mech]['count'] += 1
     
@@ -217,7 +212,7 @@ with st.sidebar:
 # 3. MAIN
 # ═══════════════════════════════════════════════
 
-st.title("🚀 ACD DAD v3.56")
+st.title("🚀 ACD DAD v3.57 (Optimized)")
 st.caption(f"Giờ hiện tại: {now_vn.strftime('%H:%M:%S')} (ICT) | Nhấn R để cập nhật vạch đỏ")
 
 raw_input = st.text_area("Dán lịch bay...", height=80)
@@ -383,8 +378,12 @@ if raw_input:
         for col in readonly_cols:
             col_cfg[col] = st.column_config.TextColumn(col, disabled=True)
 
+        # Thêm cột STT bắt đầu từ 1
+        edit_src.insert(0, 'STT', range(1, len(edit_src) + 1))
+        col_cfg['STT'] = st.column_config.NumberColumn("STT", disabled=True)
+
         edited = st.data_editor(edit_src, column_config=col_cfg,
-                                hide_index=False, use_container_width=True, key="editor")
+                                hide_index=True, use_container_width=True, key="editor")
 
         # ★★★ Khi user chỉnh tay: chỉ cho phép thay đổi chuyến TƯƠNG LAI
         for idx in df.index:
@@ -462,8 +461,11 @@ if raw_input:
                     annotation_position="top left", annotation_font_color="red"
                 )
             fig.add_vline(x=now_ts, line_width=2, line_dash="dot", line_color="red",
-                          annotation_text="Hiện tại", annotation_position="top right",
-                          annotation_font_color="red")
+                          annotation_text=f"◀ {now_vn.strftime('%H:%M')}",
+                          annotation_position="top right",
+                          annotation_font_color="red",
+                          annotation_font_size=12,
+                          annotation_bgcolor="rgba(255,255,255,0.8)")
             fig.update_layout(
                 height=220, margin=dict(l=10,r=10,t=30,b=10),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -474,13 +476,13 @@ if raw_input:
 
         col_crs, col_mech = st.columns(2)
         with col_crs:
-            st.markdown("**CRS — Giám định viên**")
+            st.markdown("**CRS**")
             fig_crs = make_manpower_fig(df_crs_step, num_crs, "CRS",
                                         'rgba(165,42,42,0.15)', '#A52A2A', '#2E7D32')
             if fig_crs: st.plotly_chart(fig_crs, use_container_width=True)
 
         with col_mech:
-            st.markdown("**MECH — Thợ máy**")
+            st.markdown("**MECH**")
             fig_mech = make_manpower_fig(df_mech_step, num_mech, "MECH",
                                          'rgba(25,100,180,0.15)', '#1964B4', '#B45309')
             if fig_mech: st.plotly_chart(fig_mech, use_container_width=True)
@@ -502,22 +504,19 @@ if raw_input:
             sh_mech = find_shortage_periods(df_mech_step, num_mech) if not df_mech_step.empty else []
 
             st.markdown(f"""
-**Đơn vị:** Đội Kỹ thuật máy bay — Cảng hàng không Đà Nẵng (DAD)
-**Ngày:** {now_vn.strftime('%d/%m/%Y %H:%M')}
+**Đơn vị:** VJ DAD-LINE MAINTENANCE, CA LÀM {now_vn.strftime('%d/%m/%Y')}
 
 ---
 #### 1. Tổng quan lịch bay
 | Chỉ tiêu | Giá trị |
 |---|---|
 | Tổng số chuyến | **{total_flights} chuyến** |
-| Tổng giờ phục vụ tích lũy | **{total_dur_min//60}h{total_dur_min%60:02d}p** |
-| Thời lượng TB/chuyến | **{avg_dur} phút** |
 
 #### 2. Lực lượng hiện có
 | Role | Số người | Đỉnh cần | Thiếu |
 |---|---|---|---|
-| CRS (Giám định viên) | **{num_crs}** | **{peak_crs}** | **{def_crs if def_crs>0 else "—"}** |
-| MECH (Thợ máy) | **{num_mech}** | **{peak_mech}** | **{def_mech if def_mech>0 else "—"}** |
+| CRS | **{num_crs}** | **{peak_crs}** | **{def_crs if def_crs>0 else "—"}** |
+| MECH | **{num_mech}** | **{peak_mech}** | **{def_mech if def_mech>0 else "—"}** |
 """)
 
             for label, sh_list, capacity, deficit in [
@@ -600,7 +599,11 @@ if raw_input:
                     fig_g.data[i].marker.line  = dict(color=lc, width=lw)
 
             fig_g.add_vline(x=now_ts, line_width=4, line_color="red",
-                            annotation_text="Hiện tại", annotation_position="top right")
+                            annotation_text=f"◀ {now_vn.strftime('%H:%M')}",
+                            annotation_position="top right",
+                            annotation_font_color="red",
+                            annotation_font_size=13,
+                            annotation_bgcolor="rgba(255,255,255,0.85)")
             fig_g.update_layout(
                 xaxis_type='date', height=420, hovermode='closest',
                 hoverlabel=dict(bgcolor="white", font_size=13, font_family="monospace"),
