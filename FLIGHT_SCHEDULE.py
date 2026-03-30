@@ -171,13 +171,17 @@ def is_future(row, now):
 
 
 def build_step_events(df_src, role):
-    """Tạo danh sách (time, +1/-1) cho step-chart manpower của 1 role."""
+    """
+    Tạo danh sách (time, +1/-1) cho step-chart manpower.
+    Quan trọng: Nhu cầu nhân lực là cố định cho mỗi chuyến bay, 
+    bất kể chuyến đó đã được gán người hay chưa.
+    """
     events = []
     for _, r in df_src.iterrows():
         if pd.notnull(r['START_DT']) and pd.notnull(r['END_DT']):
-            if r[role] and str(r[role]).lower() not in ['nan','none','']:
-                events.append((r['START_DT'].to_pydatetime(),  1))
-                events.append((r['END_DT'].to_pydatetime(),   -1))
+            # Bỏ điều kiện kiểm tra r[role] để tính toán nhu cầu thực tế của lịch bay
+            events.append((r['START_DT'].to_pydatetime(),  1))
+            events.append((r['END_DT'].to_pydatetime(),   -1))
     events.sort()
     curr, points = 0, []
     for t, v in events:
