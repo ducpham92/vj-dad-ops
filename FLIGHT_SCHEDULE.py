@@ -9,8 +9,8 @@ st.set_page_config(page_title="ACD DAD v3.57 (Optimized)", layout="wide")
 
 # 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM (UTC+7)
 now_vn = datetime.now(timezone(timedelta(hours=7))).replace(tzinfo=None)
-# Plotly add_vline cần timestamp dạng string để tránh lỗi TypeError trên một số môi trường
-now_line = now_vn.strftime("%Y-%m-%d %H:%M:%S")
+# Plotly add_vline/add_shape cần timestamp chuẩn để không bị lỗi TypeError
+now_line = now_vn
 
 # ═══════════════════════════════════════════════
 # 1. HÀM XỬ LÝ LOGIC
@@ -483,12 +483,19 @@ if raw_input:
                     annotation_text=f"⚠ Thiếu {deficit} {label}",
                     annotation_position="top left", annotation_font_color="red"
                 )
-            fig.add_vline(x=now_line, line_width=2, line_dash="dot", line_color="red",
-                          annotation_text=f"◀ {now_vn.strftime('%H:%M')}",
-                          annotation_position="top right",
-                          annotation_font_color="red",
-                          annotation_font_size=12,
-                          annotation_bgcolor="rgba(255,255,255,0.8)")
+            
+            # Sử dụng add_vline không có annotation_text để tránh lỗi sum(x) trên một số môi trường (Streamlit Cloud)
+            fig.add_vline(x=now_line, line_width=2, line_dash="dot", line_color="red")
+            
+            # Thêm nhãn thời gian riêng biệt bằng add_annotation
+            fig.add_annotation(
+                x=now_line, y=pk + 1,
+                text=f"◀ {now_vn.strftime('%H:%M')}",
+                showarrow=False,
+                xanchor="right",
+                font=dict(color="red", size=12),
+                bgcolor="rgba(255,255,255,0.8)"
+            )
             fig.update_layout(
                 height=220, margin=dict(l=10,r=10,t=30,b=10),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -621,12 +628,19 @@ if raw_input:
                     fig_g.data[i].marker.color = colors
                     fig_g.data[i].marker.line  = dict(color=lc, width=lw)
 
-            fig_g.add_vline(x=now_line, line_width=4, line_color="red",
-                            annotation_text=f"◀ {now_vn.strftime('%H:%M')}",
-                            annotation_position="top right",
-                            annotation_font_color="red",
-                            annotation_font_size=13,
-                            annotation_bgcolor="rgba(255,255,255,0.85)")
+            # Vẽ vạch hiện tại (đỏ) - Không dùng annotation trong add_vline để tránh lỗi TypeError
+            fig_g.add_vline(x=now_line, line_width=4, line_color="red")
+            
+            # Thêm nhãn riêng biệt
+            fig_g.add_annotation(
+                x=now_line, y=0,
+                text=f"◀ {now_vn.strftime('%H:%M')}",
+                showarrow=False,
+                xanchor="right",
+                yref="paper", yanchor="top",
+                font=dict(color="red", size=13),
+                bgcolor="rgba(255,255,255,0.85)"
+            )
             fig_g.update_layout(
                 xaxis_type='date', height=420, hovermode='closest',
                 hoverlabel=dict(bgcolor="white", font_size=13, font_family="monospace"),
