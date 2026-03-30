@@ -9,8 +9,8 @@ st.set_page_config(page_title="ACD DAD v3.57 (Optimized)", layout="wide")
 
 # 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM (UTC+7)
 now_vn = datetime.now(timezone(timedelta(hours=7))).replace(tzinfo=None)
-# Plotly timeline cần timestamp dạng chuỗi hoặc datetime object không có tzinfo để khớp với dữ liệu chuyến bay
-now_line = now_vn
+# Plotly add_vline cần timestamp dạng string để tránh lỗi TypeError trên một số môi trường
+now_line = now_vn.strftime("%Y-%m-%d %H:%M:%S")
 
 # ═══════════════════════════════════════════════
 # 1. HÀM XỬ LÝ LOGIC
@@ -220,8 +220,8 @@ with st.sidebar:
         for c in ['\n','\t']: s = s.replace(c, ',')
         return [x.strip() for x in s.split(',') if x.strip()]
 
-    raw_crs  = st.text_area("CRS:",  value="Hưng, Hoàng Tr, Cường VII, Thắng VII, Trung")
-    raw_mech = st.text_area("MECH:", value="Go, Tài, Phú, Trường, Huy VII")
+    raw_crs  = st.text_area("CRS:",  value="A, B, C, D, E")
+    raw_mech = st.text_area("MECH:", value="1, 2, 3, 4, 5")
     crs_opt  = [""] + process_names(raw_crs)
     mech_opt = [""] + process_names(raw_mech)
     num_crs  = len(crs_opt)  - 1
@@ -493,7 +493,7 @@ if raw_input:
                 height=220, margin=dict(l=10,r=10,t=30,b=10),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 yaxis=dict(title=f"Số {label}", dtick=1, range=[0, pk+1.5]),
-                xaxis=dict(title=""), hovermode="x unified"
+                xaxis=dict(title="", type='date'), hovermode="x unified"
             )
             return fig
 
