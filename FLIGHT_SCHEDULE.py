@@ -150,13 +150,17 @@ def get_available_ranked(df, idx, role, options):
     res = []
     for name in options:
         if not name: continue
+        
+        # Kiểm tra xung đột: name có nằm trong bất kỳ chuyến nào trùng giờ không
         conflict = df[
-            (df[role] == name) & (df.index != idx) &
             df['START_DT'].notna() &
-            (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])
+            (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT']) &
+            (df[role].apply(lambda x: name in process_names(str(x))))
         ]
+        
         if conflict.empty:
-            workload = int(df[df[role] == name]['DURATION'].sum())
+            # Tính tải trọng: sum duration của tất cả chuyến mà name tham gia
+            workload = int(df[df[role].apply(lambda x: name in process_names(str(x)))]['DURATION'].sum())
             res.append({'Tên': name, 'Tải trọng (phút)': workload})
     return sorted(res, key=lambda x: x['Tải trọng (phút)'])
 
@@ -455,12 +459,10 @@ if raw_input:
 
         st.caption("✏️ **Bảng phân công trực tiếp**: Chỉnh giờ, chọn người rảnh, đánh dấu Maint ngay tại đây.")
         
-        # Áp dụng màu sắc cho các ô trùng lịch ngay trong editor (nếu Streamlit version hỗ trợ style trên editor)
-        # Tuy nhiên, data_editor hiện tại chưa hỗ trợ style phức tạp như dataframe.style. 
-        # Vì vậy ta dùng 1 bảng editor duy nhất để tối ưu diện tích.
-        
+        # Tăng chiều cao bảng phân công (ví dụ 600)
         edited = st.data_editor(edit_src, column_config=col_cfg,
-                                hide_index=True, use_container_width=True, key="editor")
+                                hide_index=True, use_container_width=True, key="editor",
+                                height=600)
 
         # ★★★ Cập nhật ngược lại df_final
         for idx in df.index:
@@ -635,12 +637,27 @@ if raw_input:
                                 'Cần tối đa': f"{mx} {label}", 'Thiếu': f"{mx-capacity} người"}
                                for ts, te, mx in sh_list]
                     st.dataframe(pd.DataFrame(rows_sh), hide_index=True, use_container_width=True)
+                    
+                    # Tìm các tàu MAINT trong khung giờ thiếu
                     t0_str = sh_list[0][0].strftime('%H:%M')
                     t1_str = sh_list[-1][1].strftime('%H:%M')
+                    
+                    maint_details = []
+                    for ts, te, mx in sh_list:
+                        m_ships = df[
+                            (df['MAINT'] == True) & 
+                            (df['START_DT'] < te) & (df['END_DT'] > ts)
+                        ]
+                        for _, ms in m_ships.iterrows():
+                            detail = f"Tàu **{ms['REG']}** ({ms['FLIGHT']}) bảo dưỡng lúc **{ms['START_DT'].strftime('%H:%M')}–{ms['END_DT'].strftime('%H:%M')}**"
+                            if detail not in maint_details:
+                                maint_details.append(detail)
+                    
                     st.info(
                         f"**Kiến nghị {label}:** Đề nghị bổ sung thêm **{deficit} {label}** "
-                        f"trong khung giờ cao điểm **{t0_str}–{t1_str}** "
-                        f"nhằm đảm bảo công tác kỹ thuật tàu bay đúng quy trình và an toàn."
+                        f"trong khung giờ cao điểm **{t0_str}–{t1_str}**.\n\n"
+                        + ("**Lý do cụ thể:**\n- " + "\n- ".join(maint_details) if maint_details else "") +
+                        f"\n\nViệc bổ sung nhân lực nhằm đảm bảo các gói bảo dưỡng phát sinh và an toàn kỹ thuật bay đúng quy trình."
                     )
                 else:
                     st.success(f"✅ {label}: Lực lượng hiện tại đủ đáp ứng cả ngày.")
@@ -717,7 +734,7 @@ if raw_input:
                 bgcolor="rgba(255,255,255,0.85)"
             )
             fig_g.update_layout(
-                xaxis_type='date', height=420, hovermode='closest',
+                xaxis_type='date', height=600, hovermode='closest',
                 hoverlabel=dict(bgcolor="white", font_size=13, font_family="monospace"),
             )
             fig_g.update_yaxes(autorange="reversed")
@@ -734,14 +751,16 @@ if raw_input:
             rows = []
             for name in name_list:
                 if not name: continue
-                mask = (df[role_col].astype(str)==name) & df['START_DT'].notna()
+                # Sử dụng apply để kiểm tra name trong danh sách phân công đa nhiệm
+                mask = df[role_col].apply(lambda x: name in process_names(str(x))) & df['START_DT'].notna()
                 sub  = df[mask]
                 total_flt  = len(sub)
                 total_min  = int(sub['DURATION'].sum())
                 done_min   = int(sub[sub['END_DT'] <= now_vn]['DURATION'].sum()) if total_min else 0
                 future_flt = int(sub[sub['START_DT'] > now_vn].shape[0])
                 past_flt   = total_flt - future_flt
-                has_ov     = any(df.loc[i, role_col] == name for i in ov_set if i in df.index)
+                # Kiểm tra overlap: nếu bất kỳ chuyến nào name tham gia nằm trong ov_set
+                has_ov     = any(idx in ov_set for idx in sub.index)
                 rows.append({
                     "Nhân viên":   name,
                     "Role":        role_name,
