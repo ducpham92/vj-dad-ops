@@ -9,7 +9,8 @@ st.set_page_config(page_title="ACD DAD v3.57 (Optimized)", layout="wide")
 
 # 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM (UTC+7)
 now_vn = datetime.now(timezone(timedelta(hours=7))).replace(tzinfo=None)
-now_ts = now_vn.timestamp() * 1000
+# Plotly timeline cần timestamp dạng chuỗi hoặc datetime object không có tzinfo để khớp với dữ liệu chuyến bay
+now_line = now_vn
 
 # ═══════════════════════════════════════════════
 # 1. HÀM XỬ LÝ LOGIC
@@ -482,7 +483,7 @@ if raw_input:
                     annotation_text=f"⚠ Thiếu {deficit} {label}",
                     annotation_position="top left", annotation_font_color="red"
                 )
-            fig.add_vline(x=now_ts, line_width=2, line_dash="dot", line_color="red",
+            fig.add_vline(x=now_line, line_width=2, line_dash="dot", line_color="red",
                           annotation_text=f"◀ {now_vn.strftime('%H:%M')}",
                           annotation_position="top right",
                           annotation_font_color="red",
@@ -620,7 +621,7 @@ if raw_input:
                     fig_g.data[i].marker.color = colors
                     fig_g.data[i].marker.line  = dict(color=lc, width=lw)
 
-            fig_g.add_vline(x=now_ts, line_width=4, line_color="red",
+            fig_g.add_vline(x=now_line, line_width=4, line_color="red",
                             annotation_text=f"◀ {now_vn.strftime('%H:%M')}",
                             annotation_position="top right",
                             annotation_font_color="red",
