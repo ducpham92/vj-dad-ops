@@ -6,13 +6,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # Cấu hình trang
-st.set_page_config(page_title="ACD DAD v3.52 - FULL MANPOWER", layout="wide")
+st.set_page_config(page_title="ACD DAD v3.53 - PERFECT TIME", layout="wide")
 
-# --- FIX MÚI GIỜ VIỆT NAM ---
-def get_now_vn():
-    return datetime.utcnow() + timedelta(hours=7)
-
-now_vn = get_now_vn()
+# --- XỬ LÝ MÚI GIỜ CHUẨN ---
+# Lấy giờ hiện tại của máy tính người dùng (Local Time - VN)
+now_vn = datetime.now() 
 now_ts = now_vn.timestamp() * 1000
 
 # --- 1. HÀM XỬ LÝ LOGIC ---
@@ -34,11 +32,11 @@ def calculate_work_window(row):
         date_val = str(row.get('DATE', '')).strip()
         arr_str = str(row.get('ARR', '')).strip()
         dep_str = str(row.get('DEP', '')).strip()
-        curr_year = get_now_vn().year
+        curr_dt = datetime.now()
         try:
-            if '-' in date_val: base_date = datetime.strptime(f"{date_val}-{curr_year}", "%d-%b-%Y").date()
-            else: base_date = datetime.strptime(f"{date_val}/{curr_year}", "%d/%m/%Y").date()
-        except: base_date = get_now_vn().date()
+            if '-' in date_val: base_date = datetime.strptime(f"{date_val}-{curr_dt.year}", "%d-%b-%Y").date()
+            else: base_date = datetime.strptime(f"{date_val}/{curr_dt.year}", "%d/%m/%Y").date()
+        except: base_date = curr_dt.date()
 
         def parse_time(t_str, b_date):
             if not t_str or t_str in ['____', 'nan', 'None', '', 'nan']: return None
@@ -66,29 +64,28 @@ def check_overlap(row, current_df, role):
     ]
     return not overlap.empty
 
-# --- 2. GIAO DIỆN SIDEBAR ---
+# --- 2. SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ Cấu hình Ca Trực")
+    st.header("⚙️ Cấu hình")
     def process_names(s):
         if not s: return []
         for char in ['\n', '\t']: s = s.replace(char, ',')
         return [x.strip() for x in s.split(',') if x.strip()]
     
-    raw_crs = st.text_area("Danh sách CRS:", value="Hưng, Hoàng Tr, Cường VII, Thắng VII, Trung")
-    raw_mech = st.text_area("Danh sách MECH:", value="Go, Tài, Phú, Trường, Huy VII")
+    raw_crs = st.text_area("CRS:", value="Hưng, Hoàng Tr, Cường VII, Thắng VII, Trung")
+    raw_mech = st.text_area("MECH:", value="Go, Tài, Phú, Trường, Huy VII")
     crs_opt = [""] + process_names(raw_crs)
     mech_opt = [""] + process_names(raw_mech)
     num_crs = len(crs_opt) - 1
-
     if st.button("🗑️ Reset Toàn Bộ"):
         st.session_state.clear()
         st.rerun()
 
-# --- 3. CHƯƠNG TRÌNH CHÍNH ---
-st.title("🚀 ACD DAD v3.52 - FULL SYSTEM")
-st.caption(f"Cập nhật lúc: {now_vn.strftime('%H:%M:%S')} | Bấm 'R' để làm mới vạch đỏ")
+# --- 3. MAIN ---
+st.title("🚀 ACD DAD v3.53")
+st.caption(f"Giờ hiện tại: {now_vn.strftime('%H:%M:%S')} (ICT) | Nhấn 'R' để cập nhật vạch đỏ")
 
-raw_input = st.text_area("Dán lịch bay từ Web điều hành...", height=80)
+raw_input = st.text_area("Dán lịch bay...", height=80)
 
 if raw_input:
     df_raw = parse_raw_data(raw_input)
@@ -102,7 +99,7 @@ if raw_input:
         df = st.session_state.df_final
         df['DURATION'] = df.apply(lambda r: int((r['END_DT'] - r['START_DT']).total_seconds()/60) if pd.notnull(r['START_DT']) else 0, axis=1)
 
-        # --- BỘ CÔNG CỤ ĐIỀU PHỐI ---
+        # --- TOOLBAR ---
         c1, c2, c3 = st.columns(3)
         with c1:
             if st.button("📋 1. Copy Data gốc", use_container_width=True):
@@ -111,100 +108,78 @@ if raw_input:
                 st.rerun()
         with c2:
             if st.button("🪄 2. Tự chia lịch", use_container_width=True):
-                c_load = {n: 0 for n in crs_opt if n}; m_load = {n: 0 for n in mech_opt if n}
+                c_l, m_l = {n: 0 for n in crs_opt if n}, {n: 0 for n in mech_opt if n}
                 for idx, row in df.iterrows():
-                    for n in sorted(c_load, key=c_load.get):
+                    for n in sorted(c_l, key=c_l.get):
                         if df[(df['CRS_ASSIGN']==n) & (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])].empty:
-                            df.at[idx, 'CRS_ASSIGN'] = n; c_load[n] += row['DURATION']; break
-                    for n in sorted(m_load, key=m_load.get):
+                            df.at[idx, 'CRS_ASSIGN'] = n; c_l[n] += row['DURATION']; break
+                    for n in sorted(m_l, key=m_l.get):
                         if df[(df['MECH_ASSIGN']==n) & (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])].empty:
-                            df.at[idx, 'MECH_ASSIGN'] = n; m_load[n] += row['DURATION']; break
+                            df.at[idx, 'MECH_ASSIGN'] = n; m_l[n] += row['DURATION']; break
                 st.rerun()
         with c3:
             if st.button("🔍 3. Fix Tương Lai & Gợi ý", use_container_width=True):
                 for idx, row in df.iterrows():
                     if pd.notnull(row['START_DT']) and row['START_DT'] >= now_vn:
-                        # Fix CRS trùng và gợi ý người rảnh
                         if check_overlap(row, df, 'CRS_ASSIGN'):
                             for n in crs_opt[1:]:
                                 if df[(df['CRS_ASSIGN']==n) & (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])].empty:
                                     df.at[idx, 'CRS_ASSIGN'] = n; df.at[idx, 'STATUS'] = "✨ Fix"; break
-                        # Fix MECH trùng
                         if check_overlap(row, df, 'MECH_ASSIGN'):
                             for n in mech_opt[1:]:
                                 if df[(df['MECH_ASSIGN']==n) & (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])].empty:
                                     df.at[idx, 'MECH_ASSIGN'] = n; df.at[idx, 'STATUS'] = "✨ Fix"; break
                 st.rerun()
 
-        # Bảng nhập liệu
-        df['CHECK_CRS'] = df.apply(lambda r: "⚠️ TRÙNG" if check_overlap(r, df, 'CRS_ASSIGN') else ("✅ OK" if r['CRS_ASSIGN'] else "⚪"), axis=1)
-        df['CHECK_MECH'] = df.apply(lambda r: "⚠️ TRÙNG" if check_overlap(r, df, 'MECH_ASSIGN') else ("✅ OK" if r['MECH_ASSIGN'] else "⚪"), axis=1)
+        # Data Editor
+        st.data_editor(df, column_config={
+            "START_DT": st.column_config.DatetimeColumn("Bắt đầu", format="HH:mm"),
+            "END_DT": st.column_config.DatetimeColumn("Kết thúc", format="HH:mm"),
+            "CRS_ASSIGN": st.column_config.SelectboxColumn("CRS", options=crs_opt),
+            "MECH_ASSIGN": st.column_config.SelectboxColumn("MECH", options=mech_opt),
+        }, disabled=[c for c in df.columns if c not in ["CRS_ASSIGN", "MECH_ASSIGN", "END_DT", "NOTES", "STATUS"]], hide_index=True, use_container_width=True)
 
-        st.data_editor(
-            df,
-            column_config={
-                "STATUS": st.column_config.TextColumn("Ghi chú", width="small"),
-                "START_DT": st.column_config.DatetimeColumn("Bắt đầu", format="HH:mm"),
-                "END_DT": st.column_config.DatetimeColumn("Kết thúc", format="HH:mm"),
-                "CRS_ASSIGN": st.column_config.SelectboxColumn("Phân CRS", options=crs_opt),
-                "MECH_ASSIGN": st.column_config.SelectboxColumn("Phân MECH", options=mech_opt),
-            },
-            disabled=[c for c in df.columns if c not in ["CRS_ASSIGN", "MECH_ASSIGN", "END_DT", "NOTES", "STATUS"]],
-            hide_index=True, use_container_width=True
-        )
-
-        # --- PHẦN 4: BIỂU ĐỒ MANPOWER (ĐÃ QUAY TRỞ LẠI) ---
+        # --- MANPOWER CHART ---
         st.divider()
-        st.subheader("📊 GIẢI TRÌNH NHÂN LỰC (MANPOWER)")
-        
         events = []
         for _, r in df.iterrows():
             if pd.notnull(r['START_DT']):
                 events.append((r['START_DT'].to_pydatetime(), 1))
                 events.append((r['END_DT'].to_pydatetime(), -1))
         events.sort()
-        
-        curr, max_req, peak_t, points = 0, 0, None, []
+        curr, points = 0, []
         for t, v in events:
-            points.append({"Time": t, "Count": curr})
-            curr += v
-            points.append({"Time": t, "Count": curr})
-            if curr > max_req: max_req = curr; peak_t = t
+            points.append({"Time": t, "Count": curr}); curr += v; points.append({"Time": t, "Count": curr})
         
         if points:
+            st.subheader("📊 Manpower Report")
             df_p = pd.DataFrame(points)
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Nhân lực Peak", f"{max_req} người", delta=f"Hiện có {num_crs}")
-            m2.metric("Thời điểm Peak", peak_t.strftime("%H:%M") if peak_t else "N/A")
-            m3.metric("Trạng thái", "✅ ĐỦ" if max_req <= num_crs else "⚠️ THIẾU")
-
             fig_p = go.Figure()
-            fig_p.add_trace(go.Scatter(x=df_p['Time'], y=df_p['Count'], fill='tozeroy', line=dict(color='#A52A2A', width=3, shape='vh'), name='Nhu cầu'))
-            fig_p.add_trace(go.Scatter(x=[df_p['Time'].min(), df_p['Time'].max()], y=[num_crs, num_crs], line=dict(color='green', dash='dash', width=2), name='Hiện có'))
-            fig_p.add_vline(x=now_ts, line_width=2, line_color="red", line_dash="dot")
-            fig_p.update_layout(height=250, margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified")
+            fig_p.add_trace(go.Scatter(x=df_p['Time'], y=df_p['Count'], fill='tozeroy', line=dict(color='#A52A2A', shape='vh'), name='Cần'))
+            fig_p.add_trace(go.Scatter(x=[df_p['Time'].min(), df_p['Time'].max()], y=[num_crs, num_crs], line=dict(color='green', dash='dash'), name='Có'))
+            fig_p.add_vline(x=now_ts, line_width=3, line_color="red")
+            fig_p.update_layout(height=200, margin=dict(l=10, r=10, t=10, b=10))
             st.plotly_chart(fig_p, use_container_width=True)
 
-        # --- PHẦN 5: TIMELINE ---
-        st.subheader("👨‍🔧 Timeline & Phân công Chi tiết")
+        # --- TIMELINE CHART ---
         c_data = []
         for role in ['CRS_ASSIGN', 'MECH_ASSIGN']:
             for _, r in df.iterrows():
                 if pd.notnull(r['START_DT']) and r[role]:
                     c_data.append({
                         "Nhân viên": r[role], "Bắt đầu": r['START_DT'], "Kết thúc": r['END_DT'], "Loại": role[:3],
-                        "Chuyến": r.get('FLIGHT','N/A'), "Tuyến": r.get('ROUTE','N/A'), "Reg": r.get('REG','N/A')
+                        "Chuyến": r.get('FLIGHT',''), "Tuyến": r.get('ROUTE',''), "Reg": r.get('REG','')
                     })
         if c_data:
-            fig_g = px.timeline(pd.DataFrame(c_data), x_start="Bắt đầu", x_end="Kết thúc", y="Nhân viên", color="Loại",
-                                hover_data=["Chuyến", "Tuyến", "Reg"])
-            fig_g.update_traces(hovertemplate="<b>Chuyến:</b> %{customdata[0]}<br><b>Nhân viên:</b> %{y}")
+            st.subheader("👨‍🔧 Timeline")
+            fig_g = px.timeline(pd.DataFrame(c_data), x_start="Bắt đầu", x_end="Kết thúc", y="Nhân viên", color="Loại", hover_data=["Chuyến", "Reg"])
             fig_g.update_layout(xaxis_type='date', height=400)
-            fig_g.add_shape(type="line", x0=now_ts, x1=now_ts, y0=0, y1=1, yref="paper", line=dict(color="Red", width=4))
+            # Quan trọng: Add vạch đỏ trùng khớp với trục X
+            fig_g.add_vline(x=now_ts, line_width=4, line_color="red")
             fig_g.update_yaxes(autorange="reversed")
             st.plotly_chart(fig_g, use_container_width=True)
 
-        # Copy tên
+        # Xuất code copy
         st.subheader("📋 Dòng tên dán Web")
         cp1, cp2 = st.columns(2)
         with cp1: st.code("\n".join(df['CRS_ASSIGN'].fillna('').tolist()), language="text")
