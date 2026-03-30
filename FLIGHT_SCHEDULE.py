@@ -67,6 +67,70 @@ def check_overlap(row, current_df, role):
         (current_df['START_DT'] < row['END_DT']) & (current_df['END_DT'] > row['START_DT'])
     ]
     return not overlap.empty
+# --- CẬP NHẬT LOGIC CHO NÚT RÀ SOÁT & FIX LỖI (v3.38) ---
+
+def fix_overlapping_assignments(df, crs_list, mech_list):
+    """
+    Hàm này rà soát và gỡ bỏ các phân công bị trùng giờ, 
+    sau đó đánh dấu 'Bôi vàng' (Modified) để người dùng nhận biết.
+    """
+    df['MODIFIED'] = False
+    
+    # Rà soát CRS
+    for name in crs_list:
+        if not name: continue
+        # Lấy tất cả các chuyến của nhân viên này, sắp xếp theo thời gian
+        person_flights = df[df['CRS_ASSIGN'] == name].sort_values('START_DT')
+        last_end = None
+        for idx, row in person_flights.iterrows():
+            if last_end and row['START_DT'] < last_end:
+                # Phát hiện trùng -> Gỡ bỏ và đánh dấu
+                df.at[idx, 'CRS_ASSIGN'] = ""
+                df.at[idx, 'MODIFIED'] = True
+            else:
+                last_end = row['END_DT']
+
+    # Rà soát MECH
+    for name in mech_list:
+        if not name: continue
+        person_flights = df[df['MECH_ASSIGN'] == name].sort_values('START_DT')
+        last_end = None
+        for idx, row in person_flights.iterrows():
+            if last_end and row['START_DT'] < last_end:
+                df.at[idx, 'MECH_ASSIGN'] = ""
+                df.at[idx, 'MODIFIED'] = True
+            else:
+                last_end = row['END_DT']
+    return df
+# --- HIỂN THỊ BẢNG VỚI MÀU SẮC CẢNH BÁO ---
+
+# Tạo hàm style để bôi màu
+def highlight_modified(row):
+    if row.get('MODIFIED', False):
+        return ['background-color: #fff9c4'] * len(row) # Màu vàng nhạt cho dòng thay đổi
+    if "⚠️" in str(row.get('CHECK_CRS', '')) or "⚠️" in str(row.get('CHECK_MECH', '')):
+        return ['background-color: #ffebee'] * len(row) # Màu đỏ nhạt cho dòng đang lỗi
+    return [''] * len(row)
+
+# Áp dụng style và hiển thị
+styled_df = df.style.apply(highlight_modified, axis=1)
+
+st.data_editor(
+    styled_df,  # Sử dụng styled_df thay vì df gốc
+    column_config={
+        "MODIFIED": st.column_config.CheckboxColumn("Đã sửa", help="Dòng này vừa được hệ thống tự động điều chỉnh"),
+        "CHECK_CRS": st.column_config.TextColumn("Lỗi CRS", width="small"),
+        "CHECK_MECH": st.column_config.TextColumn("Lỗi MECH", width="small"),
+        "START_DT": st.column_config.DatetimeColumn("Bắt đầu", format="HH:mm"),
+        "END_DT": st.column_config.DatetimeColumn(" Kết thúc", format="HH:mm"),
+        "CRS_ASSIGN": st.column_config.SelectboxColumn("Phân CRS", options=crs_opt),
+        "MECH_ASSIGN": st.column_config.SelectboxColumn("Phân MECH", options=mech_opt),
+    },
+    disabled=[c for c in df.columns if c not in ["CRS_ASSIGN", "MECH_ASSIGN", "END_DT", "NOTES"]],
+    hide_index=True, 
+    use_container_width=True,
+    key="main_editor_v338"
+)
 
 # --- 2. GIAO DIỆN SIDEBAR ---
 with st.sidebar:
@@ -132,7 +196,16 @@ if raw_input:
                 st.rerun()
         with c3:
             if st.button("🔍 3. Rà soát & Fix trùng", use_container_width=True):
-                st.rerun()
+                if 'df_final' in st.session_state:
+                    # Gọi hàm fix lỗi
+                    updated_df = fix_overlapping_assignments(
+                        st.session_state.df_final, 
+                        crs_opt, 
+                        mech_opt
+            )
+            st.session_state.df_final = updated_df
+            st.warning("⚠️ Đã gỡ bỏ các phân công trùng lịch. Các dòng có thay đổi đã được đánh dấu!")
+            st.rerun()
 
         # --- BẢNG NHẬP LIỆU CHÍNH ---
         st.data_editor(
