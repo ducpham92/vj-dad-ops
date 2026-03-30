@@ -365,16 +365,10 @@ if raw_input:
         future_ov_all  = future_ov_crs | future_ov_mech
         past_ov_all    = all_overlap_idx - future_ov_all
 
-        # ─── BẢNG PHÂN CÔNG ───────────────────────────────────────
-        st.subheader("📋 Bảng phân công")
-
-        if all_overlap_idx:
-            st.warning(
-                f"⚠️ Trùng ca: **{len(all_overlap_idx)}** chuyến  "
-                f"(CRS: {len(overlap_crs)}, MECH: {len(overlap_mech)})  |  "
-                f"🟠 Tương lai cần xử lý: **{len(future_ov_all)}**  |  "
-                f"🟡 Quá khứ ghi nhận: **{len(past_ov_all)}**"
-            )
+        # ─── BẢNG PHÂN CÔNG (Hợp nhất) ──────────────────────────────
+        readonly_cols = [c for c in ['DATE', 'FLIGHT','ROUTE','REG'] if c in df.columns]
+        view_cols = ['STT'] + readonly_cols + ['START_DT','END_DT','DURATION','MAINT','CRS_ASSIGN','MECH_ASSIGN','STATUS']
+        view_cols = [c for c in view_cols if c in df.columns]
 
         # ─── GIẢI QUYẾT XUNG ĐỘT & BẢO DƯỠNG ────────────────────────
         # Tìm các chuyến được đánh dấu bảo dưỡng (MAINT) hoặc có xung đột tương lai
@@ -394,21 +388,17 @@ if raw_input:
                 is_overlap = idx in future_ov_all
                 is_maint   = row.get('MAINT', False)
                 
-                # Tiêu đề container dựa trên loại hỗ trợ
                 label = "🛠️ BẢO DƯỠNG" if is_maint else "⚠️ TRÙNG LỊCH"
                 if is_overlap and is_maint: label = "🛠️ BẢO DƯỠNG & ⚠️ TRÙNG"
 
                 with st.container(border=True):
                     c_info, c_fix_crs, c_fix_mech = st.columns([1.2, 2, 2])
-                    
                     with c_info:
                         st.markdown(f"**{label}**")
                         st.markdown(f"**{flt}** ({reg})")
                         st.caption(f"🕒 {t_s} → {t_e} ({dur}p)")
-                        if is_overlap:
-                            st.error("Xung đột!")
+                        if is_overlap: st.error("Xung đột!")
 
-                    # Gợi ý cho cả 2 role
                     for role_label, role_col, opt, col_ui in [
                         ('CRS', 'CRS_ASSIGN', crs_opt, c_fix_crs),
                         ('MECH', 'MECH_ASSIGN', mech_opt, c_fix_mech)
@@ -416,74 +406,32 @@ if raw_input:
                         with col_ui:
                             current_staff_list = process_names(str(row[role_col]))
                             candidates = get_available_ranked(df, idx, role_col, opt)
-                            
                             st.markdown(f"**{role_label}**: `{', '.join(current_staff_list) if current_staff_list else 'Trống'}`")
-                            
                             if candidates:
                                 available_new = [c for c in candidates if c['Tên'] not in current_staff_list]
                                 if available_new:
                                     st.caption("Gợi ý bổ sung (tải thấp):")
-                                    # Hiển thị 3 người rảnh nhất
                                     for cand in available_new[:3]:
-                                        name = cand['Tên']
-                                        load = cand['Tải trọng (phút)']
+                                        name, load = cand['Tên'], cand['Tải trọng (phút)']
                                         if st.button(f"+ {name} ({load}p)", key=f"add_{idx}_{role_col}_{name}"):
                                             new_list = current_staff_list + [name]
                                             df.at[idx, role_col] = ", ".join(new_list)
                                             df.at[idx, 'STATUS'] = "✨ Support"
                                             st.rerun()
-                                else:
-                                    st.warning("Hết người rảnh")
-                            else:
-                                st.warning("Không có người rảnh")
+                                else: st.warning("Hết người rảnh")
+                            else: st.warning("Không có người rảnh")
         st.divider()
 
-        # ── Styler tô màu ──────────────────────────────────────────
-        # 🟠 Cam đậm  = overlap tương lai (cần fix ngay)
-        # 🟡 Vàng nhạt = overlap quá khứ  (chỉ ghi nhận)
-        def highlight_overlap(row):
-            styles    = [''] * len(row)
-            col_names = list(row.index)
-            i         = row.name
-            ORANGE = 'background-color: #FF8C00; color: #fff; font-weight:600;'   # cam đậm tương lai
-            YELLOW = 'background-color: #FFF176; color: #7A6000;'                  # vàng nhạt quá khứ
-            if 'CRS_ASSIGN' in col_names:
-                c = col_names.index('CRS_ASSIGN')
-                if   i in future_ov_crs: styles[c] = ORANGE
-                elif i in past_ov_crs:   styles[c] = YELLOW
-            if 'MECH_ASSIGN' in col_names:
-                c = col_names.index('MECH_ASSIGN')
-                if   i in future_ov_mech: styles[c] = ORANGE
-                elif i in past_ov_mech:   styles[c] = YELLOW
-            return styles
-
-        readonly_cols = [c for c in ['FLIGHT','ROUTE','REG'] if c in df.columns]
-        view_cols = ['STT'] + readonly_cols + ['START_DT','END_DT','DURATION','MAINT','CRS_ASSIGN','MECH_ASSIGN','STATUS']
-        view_cols = [c for c in view_cols if c in df.columns]
-
-        styled_view = (
-            df[view_cols].style
-            .apply(highlight_overlap, axis=1)
-            .format({
-                'START_DT': lambda x: x.strftime('%H:%M') if pd.notnull(x) else '',
-                'END_DT':   lambda x: x.strftime('%H:%M') if pd.notnull(x) else '',
-                'DURATION': "{:.0f}p"
-            })
-        )
-        st.dataframe(styled_view, use_container_width=True, hide_index=True)
-
-        # ── Data editor chỉnh tay ─────────────────────────────────
-        st.caption("✏️ Chỉnh phân công (CRS / MECH)  —  ô 🟠 cam = tương lai cần fix  |  🟡 vàng = quá khứ")
+        # Chuẩn bị dữ liệu cho editor
         edit_src = df[view_cols].copy()
         edit_src['START_DT'] = edit_src['START_DT'].apply(lambda x: x.strftime('%H:%M') if pd.notnull(x) else '')
         edit_src['END_DT']   = edit_src['END_DT'].apply(  lambda x: x.strftime('%H:%M') if pd.notnull(x) else '')
-
-        # Chuyển CRS_ASSIGN và MECH_ASSIGN thành list để MultiselectColumn hoạt động
         edit_src['CRS_ASSIGN'] = edit_src['CRS_ASSIGN'].apply(lambda x: process_names(str(x)) if pd.notnull(x) else [])
         edit_src['MECH_ASSIGN'] = edit_src['MECH_ASSIGN'].apply(lambda x: process_names(str(x)) if pd.notnull(x) else [])
 
         col_cfg = {
             "STT":         st.column_config.NumberColumn("STT", disabled=True),
+            "DATE":        st.column_config.TextColumn("Ngày", disabled=True),
             "DURATION":    st.column_config.NumberColumn("Dur", disabled=True, format="%d p"),
             "MAINT":       st.column_config.CheckboxColumn("Maint", help="Đánh dấu chuyến cần làm bảo dưỡng bổ sung"),
             "CRS_ASSIGN":  st.column_config.MultiselectColumn("CRS", options=crs_opt[1:]),
@@ -492,13 +440,19 @@ if raw_input:
             "START_DT":    st.column_config.TextColumn("Bắt đầu"),
             "END_DT":      st.column_config.TextColumn("Kết thúc"),
         }
-        for col in readonly_cols:
+        for col in [c for c in readonly_cols if c != 'DATE']:
             col_cfg[col] = st.column_config.TextColumn(col, disabled=True)
 
+        st.caption("✏️ **Bảng phân công trực tiếp**: Chỉnh giờ, chọn người rảnh, đánh dấu Maint ngay tại đây.")
+        
+        # Áp dụng màu sắc cho các ô trùng lịch ngay trong editor (nếu Streamlit version hỗ trợ style trên editor)
+        # Tuy nhiên, data_editor hiện tại chưa hỗ trợ style phức tạp như dataframe.style. 
+        # Vì vậy ta dùng 1 bảng editor duy nhất để tối ưu diện tích.
+        
         edited = st.data_editor(edit_src, column_config=col_cfg,
                                 hide_index=True, use_container_width=True, key="editor")
 
-        # ★★★ Khi user chỉnh tay: Cập nhật ngược lại df_final
+        # ★★★ Cập nhật ngược lại df_final
         for idx in df.index:
             row_now = df.loc[idx]
             
@@ -520,13 +474,13 @@ if raw_input:
                 
             df.at[idx, 'START_DT']    = new_start
             df.at[idx, 'END_DT']      = new_end
-            
-            # Cập nhật các cột khác
             df.at[idx, 'MAINT']       = bool(edited.at[idx, 'MAINT'])
             df.at[idx, 'CRS_ASSIGN']  = ", ".join(edited.at[idx, 'CRS_ASSIGN'])
             df.at[idx, 'MECH_ASSIGN'] = ", ".join(edited.at[idx, 'MECH_ASSIGN'])
             df.at[idx, 'STATUS']      = edited.at[idx, 'STATUS']
             df.at[idx, 'DURATION']    = int((new_end - new_start).total_seconds() / 60)
+
+        st.divider()
 
         st.divider()
 
