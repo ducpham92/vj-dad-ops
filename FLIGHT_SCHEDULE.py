@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime, timedelta
+now_vn = datetime.utcnow() + timedelta(hours=7) 
+now_ts = now_vn.timestamp() * 1000  # Chuyển sang Miliseconds cho Plotly
 import plotly.express as px
 import plotly.graph_objects as go
 
@@ -190,6 +192,7 @@ if raw_input:
             fig_p.add_trace(go.Scatter(x=df_p['Time'], y=df_p['Count'], fill='tozeroy', fillcolor='rgba(165, 42, 42, 0.1)', line=dict(color='#A52A2A', width=3, shape='vh'), name='Nhu cầu'))
             fig_p.add_trace(go.Scatter(x=[df_p['Time'].min(), df_p['Time'].max()], y=[num_crs, num_crs], line=dict(color='green', dash='dash'), name='Hiện có'))
             fig_p.add_vline(x=now_ts, line_width=2, line_color="red", line_dash="dot")
+            fig_p.add_annotation(x=now_ts, y=1, yref="paper", text=f"BÂY GIỜ: {now_vn.strftime('%H:%M')}", font=dict(color="red"))
             fig_p.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10))
             st.plotly_chart(fig_p, use_container_width=True)
 
@@ -206,8 +209,20 @@ if raw_input:
             fig_g = px.timeline(df_g, x_start="Bắt đầu", x_end="Kết thúc", y="Nhân viên", color="Loại")
             fig_g.update_layout(xaxis_type='date')
             # Vạch NOW ĐẬM
-            fig_g.add_shape(type="line", x0=now_ts, x1=now_ts, y0=0, y1=1, yref="paper", line=dict(color="Red", width=4))
-            fig_g.add_annotation(x=now_ts, y=1.1, yref="paper", text=f"BÂY GIỜ ({datetime.now().strftime('%H:%M')})", font=dict(color="red", size=12), showarrow=False)
+            fig_g.add_shape(
+                type="line", 
+                x0=now_ts, x1=now_ts, 
+                y0=0, y1=1, 
+                yref="paper", 
+                line=dict(color="Red", width=4)
+            )
+            fig_g.add_annotation(
+                x=now_ts, y=1.1, 
+                yref="paper", 
+                text=f"BÂY GIỜ (ICT): {now_vn.strftime('%H:%M')}", 
+                font=dict(color="red", size=12), 
+                showarrow=False
+            )
             fig_g.update_yaxes(autorange="reversed")
             st.plotly_chart(fig_g, use_container_width=True)
 
