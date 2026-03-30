@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="ACD DAD v3.57 (Optimized)", layout="wide")
+st.set_page_config(page_title="VJ DAD v1.0 (Optimized)", layout="wide")
 
 # 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM (UTC+7)
 now_vn = datetime.now(timezone(timedelta(hours=7))).replace(tzinfo=None)
@@ -690,7 +690,7 @@ if raw_input:
                         report_text += f"   - Tình trạng: Đủ đáp ứng.\n\n"
 
                 report_text += f"{'='*40}\n"
-                report_text += f"Báo cáo được trích xuất từ ACD DAD v3.57 (Optimized)"
+                report_text += f"Báo cáo được trích xuất từ ducphamv@vietjetair.com"
 
                 st.divider()
                 st.subheader("📋 Copy Báo cáo gửi sếp")
