@@ -4,17 +4,17 @@ import io
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
+import time
 
-# --- CẤU HÌNH TỰ ĐỘNG REFRESH (Làm vạch Now tự chạy mỗi 1 phút) ---
-from streamlit_autorefresh import st_autorefresh
-st_autorefresh(interval=60000, key="now_line_refresh")
+# Cấu hình trang
+st.set_page_config(page_title="ACD DAD v3.51 - STABLE", layout="wide")
 
-# Múi giờ Việt Nam
+# --- FIX MÚI GIỜ VIỆT NAM ---
 def get_now_vn():
     return datetime.utcnow() + timedelta(hours=7)
 
-# Cấu hình trang
-st.set_page_config(page_title="ACD DAD v3.50 - SMART FIX", layout="wide")
+now_vn = get_now_vn()
+now_ts = now_vn.timestamp() * 1000
 
 # --- 1. HÀM XỬ LÝ LOGIC ---
 def parse_raw_data(data_string):
@@ -35,12 +35,11 @@ def calculate_work_window(row):
         date_val = str(row.get('DATE', '')).strip()
         arr_str = str(row.get('ARR', '')).strip()
         dep_str = str(row.get('DEP', '')).strip()
-        now_dt = get_now_vn()
-        curr_year = now_dt.year
+        curr_year = get_now_vn().year
         try:
             if '-' in date_val: base_date = datetime.strptime(f"{date_val}-{curr_year}", "%d-%b-%Y").date()
             else: base_date = datetime.strptime(f"{date_val}/{curr_year}", "%d/%m/%Y").date()
-        except: base_date = now_dt.date()
+        except: base_date = get_now_vn().date()
 
         def parse_time(t_str, b_date):
             if not t_str or t_str in ['____', 'nan', 'None', '', 'nan']: return None
@@ -80,14 +79,18 @@ with st.sidebar:
     raw_mech = st.text_area("Danh sách MECH:", value="Go, Tài, Phú, Trường, Huy VII")
     crs_opt = [""] + process_names(raw_crs)
     mech_opt = [""] + process_names(raw_mech)
+
+    # Nút bấm Refresh thủ công nếu cần
+    if st.button("🔄 Cập nhật Now-line"):
+        st.rerun()
+    
     if st.button("🗑️ Reset Toàn Bộ"):
         st.session_state.clear()
         st.rerun()
 
 # --- 3. CHƯƠNG TRÌNH CHÍNH ---
-st.title("🚀 ACD DAD v3.50 - INTELLIGENT")
-now_vn = get_now_vn()
-now_ts = now_vn.timestamp() * 1000
+st.title("🚀 ACD DAD v3.51 - SMART & STABLE")
+st.caption(f"Thời gian hệ thống (ICT): {now_vn.strftime('%H:%M:%S')}")
 
 raw_input = st.text_area("Dán lịch bay từ Web điều hành...", height=100)
 
@@ -104,7 +107,6 @@ if raw_input:
         df['DURATION'] = df.apply(lambda r: int((r['END_DT'] - r['START_DT']).total_seconds()/60) if pd.notnull(r['START_DT']) else 0, axis=1)
 
         # --- BỘ CÔNG CỤ ĐIỀU PHỐI ---
-        st.subheader("🛠️ Bộ Công Cụ Thông Minh")
         c1, c2, c3 = st.columns(3)
         with c1:
             if st.button("📋 1. Copy Data gốc", use_container_width=True):
@@ -112,7 +114,7 @@ if raw_input:
                 if 'MECH' in df.columns: df['MECH_ASSIGN'] = df['MECH'].astype(str).replace('nan', '')
                 st.rerun()
         with c2:
-            if st.button("🪄 2. Tự chia lịch (Full)", use_container_width=True):
+            if st.button("🪄 2. Tự chia lịch (Cân bằng)", use_container_width=True):
                 c_load = {n: 0 for n in crs_opt if n}; m_load = {n: 0 for n in mech_opt if n}
                 for idx, row in df.iterrows():
                     for n in sorted(c_load, key=c_load.get):
@@ -123,26 +125,28 @@ if raw_input:
                             df.at[idx, 'MECH_ASSIGN'] = n; m_load[n] += row['DURATION']; break
                 st.rerun()
         with c3:
-            if st.button("🔍 3. Fix Tương Lai & Gợi ý người", use_container_width=True):
-                # Chỉ fix những chuyến có START_DT >= Thời điểm hiện tại
+            # FIX THÔNG MINH: CHỈ FIX TƯƠNG LAI & GỢI Ý NGƯỜI RẢNH
+            if st.button("🔍 3. Fix Tương Lai & Gợi ý", use_container_width=True):
                 for idx, row in df.iterrows():
+                    # Chỉ xử lý các chuyến chưa bắt đầu (Tương lai)
                     if pd.notnull(row['START_DT']) and row['START_DT'] >= now_vn:
                         # Fix CRS
                         if check_overlap(row, df, 'CRS_ASSIGN'):
-                            df.at[idx, 'CRS_ASSIGN'] = "" # Tạm gỡ người trùng
-                            # Gợi ý người trống lịch
-                            for n in crs_opt[1:]:
+                            for n in crs_opt[1:]: # Tìm người trong danh sách
                                 if df[(df['CRS_ASSIGN']==n) & (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])].empty:
-                                    df.at[idx, 'CRS_ASSIGN'] = n; df.at[idx, 'STATUS'] = "✨ Gợi ý mới"; break
+                                    df.at[idx, 'CRS_ASSIGN'] = n
+                                    df.at[idx, 'STATUS'] = "✨ Gợi ý mới"
+                                    break
                         # Fix MECH
                         if check_overlap(row, df, 'MECH_ASSIGN'):
-                            df.at[idx, 'MECH_ASSIGN'] = ""
                             for n in mech_opt[1:]:
                                 if df[(df['MECH_ASSIGN']==n) & (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])].empty:
-                                    df.at[idx, 'MECH_ASSIGN'] = n; df.at[idx, 'STATUS'] = "✨ Gợi ý mới"; break
+                                    df.at[idx, 'MECH_ASSIGN'] = n
+                                    df.at[idx, 'STATUS'] = "✨ Gợi ý mới"
+                                    break
                 st.rerun()
 
-        # Bảng nhập liệu
+        # Check trùng lịch để hiển thị Icon
         df['CHECK_CRS'] = df.apply(lambda r: "⚠️ TRÙNG" if check_overlap(r, df, 'CRS_ASSIGN') else ("✅ OK" if r['CRS_ASSIGN'] else "⚪"), axis=1)
         df['CHECK_MECH'] = df.apply(lambda r: "⚠️ TRÙNG" if check_overlap(r, df, 'MECH_ASSIGN') else ("✅ OK" if r['MECH_ASSIGN'] else "⚪"), axis=1)
 
@@ -159,46 +163,29 @@ if raw_input:
             hide_index=True, use_container_width=True
         )
 
-        st.subheader("📋 Xuất dữ liệu dán Web")
-        cp1, cp2 = st.columns(2)
-        with cp1: st.code("\n".join(df['CRS_ASSIGN'].fillna('').tolist()), language="text")
-        with cp2: st.code("\n".join(df['MECH_ASSIGN'].fillna('').tolist()), language="text")
-
-        # --- PHẦN 4: MANPOWER ---
+        # Biểu đồ Timeline (Fix vạch đỏ và Hover)
         st.divider()
-        st.subheader(f"📊 Manpower (Vạch Now tự cập nhật: {now_vn.strftime('%H:%M:%S')})")
-        events = []
-        for _, r in df.iterrows():
-            if pd.notnull(r['START_DT']):
-                events.append((r['START_DT'].to_pydatetime(), 1))
-                events.append((r['END_DT'].to_pydatetime(), -1))
-        events.sort()
-        curr, points = 0, []
-        for t, v in events:
-            points.append({"Time": t, "Count": curr}); curr += v; points.append({"Time": t, "Count": curr})
-        
-        if points:
-            df_p = pd.DataFrame(points)
-            fig_p = go.Figure()
-            fig_p.add_trace(go.Scatter(x=df_p['Time'], y=df_p['Count'], fill='tozeroy', line=dict(color='#A52A2A', shape='vh'), name='Cần'))
-            fig_p.add_trace(go.Scatter(x=[df_p['Time'].min(), df_p['Time'].max()], y=[len(crs_opt)-1, len(crs_opt)-1], line=dict(color='green', dash='dash'), name='Có'))
-            fig_p.add_vline(x=now_ts, line_width=3, line_color="red", line_dash="solid")
-            fig_p.update_layout(height=250, margin=dict(l=10, r=10, t=10, b=10))
-            st.plotly_chart(fig_p, use_container_width=True)
-
-        # --- PHẦN 5: TIMELINE ---
         c_data = []
         for role in ['CRS_ASSIGN', 'MECH_ASSIGN']:
             for _, r in df.iterrows():
                 if pd.notnull(r['START_DT']) and r[role]:
                     c_data.append({
                         "Nhân viên": r[role], "Bắt đầu": r['START_DT'], "Kết thúc": r['END_DT'], "Loại": role[:3],
-                        "Chuyến bay": r.get('FLIGHT', 'N/A'), "Tuyến": r.get('ROUTE', 'N/A'), "Tàu bay": r.get('REG', 'N/A')
+                        "Chuyến": r.get('FLIGHT',''), "Tuyến": r.get('ROUTE',''), "Reg": r.get('REG','')
                     })
         if c_data:
-            fig_g = px.timeline(pd.DataFrame(c_data), x_start="Bắt đầu", x_end="Kết thúc", y="Nhân viên", color="Loại", hover_data=["Chuyến bay", "Tuyến", "Tàu bay"])
+            st.subheader("👨‍🔧 Timeline & Manpower")
+            fig_g = px.timeline(pd.DataFrame(c_data), x_start="Bắt đầu", x_end="Kết thúc", y="Nhân viên", color="Loại",
+                                hover_data=["Chuyến", "Tuyến", "Reg"])
             fig_g.update_traces(hovertemplate="<b>Chuyến:</b> %{customdata[0]}<br><b>Nhân viên:</b> %{y}")
-            fig_g.update_layout(xaxis_type='date')
+            fig_g.update_layout(xaxis_type='date', height=400)
+            # Vạch Now Line chuẩn màu đỏ, nét liền
             fig_g.add_shape(type="line", x0=now_ts, x1=now_ts, y0=0, y1=1, yref="paper", line=dict(color="Red", width=4))
             fig_g.update_yaxes(autorange="reversed")
             st.plotly_chart(fig_g, use_container_width=True)
+
+        # Xuất dữ liệu copy
+        st.subheader("📋 Dòng tên để dán Web")
+        cp1, cp2 = st.columns(2)
+        with cp1: st.code("\n".join(df['CRS_ASSIGN'].fillna('').tolist()), language="text")
+        with cp2: st.code("\n".join(df['MECH_ASSIGN'].fillna('').tolist()), language="text")
