@@ -100,12 +100,17 @@ def find_overlaps(df):
             df[role].notna() & (df[role] != '') &
             (~df[role].astype(str).str.lower().isin(['nan','none'])) &
             df['START_DT'].notna()
-        ]
+        ].copy()
+        
         idxs = valid.index.tolist()
         for i in range(len(idxs)):
             for j in range(i+1, len(idxs)):
                 ri, rj = valid.loc[idxs[i]], valid.loc[idxs[j]]
-                if ri[role] == rj[role]:
+                # Hỗ trợ kiểm tra nhiều nhân viên trong cùng 1 chuyến
+                names_i = process_names(str(ri[role]))
+                names_j = process_names(str(rj[role]))
+                common = set(names_i) & set(names_j)
+                if common:
                     if ri['START_DT'] < rj['END_DT'] and rj['START_DT'] < ri['END_DT']:
                         s.add(idxs[i]); s.add(idxs[j])
         result[role] = s
@@ -173,15 +178,18 @@ def is_future(row, now):
 def build_step_events(df_src, role):
     """
     Tạo danh sách (time, +1/-1) cho step-chart manpower.
-    Quan trọng: Nhu cầu nhân lực là cố định cho mỗi chuyến bay, 
-    bất kể chuyến đó đã được gán người hay chưa.
+    Tính toán nhu cầu dựa trên số lượng nhân sự được gán (nếu có).
+    Mỗi chuyến bay mặc định cần ít nhất 1 người.
     """
     events = []
     for _, r in df_src.iterrows():
         if pd.notnull(r['START_DT']) and pd.notnull(r['END_DT']):
-            # Bỏ điều kiện kiểm tra r[role] để tính toán nhu cầu thực tế của lịch bay
-            events.append((r['START_DT'].to_pydatetime(),  1))
-            events.append((r['END_DT'].to_pydatetime(),   -1))
+            # Đếm số lượng nhân sự đã gán cho chuyến bay này
+            assigned_names = process_names(str(r[role])) if pd.notnull(r[role]) else []
+            # Nhu cầu là số người đã gán, hoặc tối thiểu là 1 nếu chưa gán
+            demand = max(len(assigned_names), 1)
+            events.append((r['START_DT'].to_pydatetime(),  demand))
+            events.append((r['END_DT'].to_pydatetime(),   -demand))
     events.sort()
     curr, points = 0, []
     for t, v in events:
@@ -430,7 +438,7 @@ if raw_input:
             return styles
 
         readonly_cols = [c for c in ['FLIGHT','ROUTE','REG'] if c in df.columns]
-        view_cols = ['STT'] + readonly_cols + ['START_DT','END_DT','CRS_ASSIGN','MECH_ASSIGN','STATUS']
+        view_cols = ['STT'] + readonly_cols + ['START_DT','END_DT','DURATION','CRS_ASSIGN','MECH_ASSIGN','STATUS']
         view_cols = [c for c in view_cols if c in df.columns]
 
         styled_view = (
@@ -439,6 +447,7 @@ if raw_input:
             .format({
                 'START_DT': lambda x: x.strftime('%H:%M') if pd.notnull(x) else '',
                 'END_DT':   lambda x: x.strftime('%H:%M') if pd.notnull(x) else '',
+                'DURATION': "{:.0f}p"
             })
         )
         st.dataframe(styled_view, use_container_width=True, hide_index=True)
@@ -449,13 +458,18 @@ if raw_input:
         edit_src['START_DT'] = edit_src['START_DT'].apply(lambda x: x.strftime('%H:%M') if pd.notnull(x) else '')
         edit_src['END_DT']   = edit_src['END_DT'].apply(  lambda x: x.strftime('%H:%M') if pd.notnull(x) else '')
 
+        # Chuyển CRS_ASSIGN và MECH_ASSIGN thành list để MultiselectColumn hoạt động
+        edit_src['CRS_ASSIGN'] = edit_src['CRS_ASSIGN'].apply(lambda x: process_names(str(x)) if pd.notnull(x) else [])
+        edit_src['MECH_ASSIGN'] = edit_src['MECH_ASSIGN'].apply(lambda x: process_names(str(x)) if pd.notnull(x) else [])
+
         col_cfg = {
             "STT":         st.column_config.NumberColumn("STT", disabled=True),
-            "CRS_ASSIGN":  st.column_config.SelectboxColumn("CRS",    options=crs_opt),
-            "MECH_ASSIGN": st.column_config.SelectboxColumn("MECH",   options=mech_opt),
+            "DURATION":    st.column_config.NumberColumn("Dur", disabled=True, format="%d p"),
+            "CRS_ASSIGN":  st.column_config.MultiselectColumn("CRS", options=crs_opt[1:]),
+            "MECH_ASSIGN": st.column_config.MultiselectColumn("MECH", options=mech_opt[1:]),
             "STATUS":      st.column_config.TextColumn("Status"),
-            "START_DT":    st.column_config.TextColumn("Bắt đầu"), # Cho phép sửa giờ
-            "END_DT":      st.column_config.TextColumn("Kết thúc"), # Cho phép sửa giờ
+            "START_DT":    st.column_config.TextColumn("Bắt đầu"),
+            "END_DT":      st.column_config.TextColumn("Kết thúc"),
         }
         for col in readonly_cols:
             col_cfg[col] = st.column_config.TextColumn(col, disabled=True)
@@ -463,38 +477,34 @@ if raw_input:
         edited = st.data_editor(edit_src, column_config=col_cfg,
                                 hide_index=True, use_container_width=True, key="editor")
 
-        # ★★★ Khi user chỉnh tay: Cập nhật ngược lại df_final (bao gồm cả giờ)
+        # ★★★ Khi user chỉnh tay: Cập nhật ngược lại df_final
         for idx in df.index:
             row_now = df.loc[idx]
             
-            # Hàm phụ parse giờ từ editor
             def parse_editor_time(time_str, original_dt):
                 if not time_str or not original_dt: return original_dt
                 try:
                     time_str = time_str.replace(':', '')
                     if len(time_str) != 4: return original_dt
                     new_time = datetime.strptime(time_str, '%H%M').time()
-                    # Giữ nguyên ngày của original_dt
                     return datetime.combine(original_dt.date(), new_time)
                 except:
                     return original_dt
 
-            # Cập nhật START_DT, END_DT
             new_start = parse_editor_time(edited.at[idx, 'START_DT'], row_now['START_DT'])
             new_end   = parse_editor_time(edited.at[idx, 'END_DT'],   row_now['END_DT'])
             
-            # Xử lý nếu end < start (qua đêm)
             if new_end < new_start:
                 new_end += timedelta(days=1)
                 
             df.at[idx, 'START_DT']    = new_start
             df.at[idx, 'END_DT']      = new_end
-            df.at[idx, 'CRS_ASSIGN']  = edited.at[idx, 'CRS_ASSIGN']
-            df.at[idx, 'MECH_ASSIGN'] = edited.at[idx, 'MECH_ASSIGN']
-            df.at[idx, 'STATUS']      = edited.at[idx, 'STATUS']
             
-            # Recalculate duration
-            df.at[idx, 'DURATION'] = int((new_end - new_start).total_seconds() / 60)
+            # Chuyển list từ Multiselect về dạng chuỗi phẩy để lưu trữ
+            df.at[idx, 'CRS_ASSIGN']  = ", ".join(edited.at[idx, 'CRS_ASSIGN'])
+            df.at[idx, 'MECH_ASSIGN'] = ", ".join(edited.at[idx, 'MECH_ASSIGN'])
+            df.at[idx, 'STATUS']      = edited.at[idx, 'STATUS']
+            df.at[idx, 'DURATION']    = int((new_end - new_start).total_seconds() / 60)
 
         st.divider()
 
