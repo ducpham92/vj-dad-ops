@@ -1,13 +1,14 @@
 import streamlit as st
 import pandas as pd
 import io
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import plotly.express as px
 import plotly.graph_objects as go
 
 st.set_page_config(page_title="ACD DAD v3.57 (Optimized)", layout="wide")
 
-now_vn = datetime.now()
+# 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM (UTC+7)
+now_vn = datetime.now(timezone(timedelta(hours=7))).replace(tzinfo=None)
 now_ts = now_vn.timestamp() * 1000
 
 # ═══════════════════════════════════════════════
@@ -41,28 +42,49 @@ def calculate_work_window(row):
         date_val = str(row.get('DATE', '')).strip()
         arr_str  = str(row.get('ARR',  '')).strip()
         dep_str  = str(row.get('DEP',  '')).strip()
-        curr_dt  = datetime.now()
+        
+        # Sử dụng now_vn để đồng bộ múi giờ
         try:
             if '-' in date_val:
-                base_date = datetime.strptime(f"{date_val}-{curr_dt.year}", "%d-%b-%Y").date()
+                # Định dạng 30-Mar-2026 hoặc 30-Mar
+                if len(date_val.split('-')) == 3:
+                    base_date = datetime.strptime(date_val, "%d-%b-%Y").date()
+                else:
+                    base_date = datetime.strptime(f"{date_val}-{now_vn.year}", "%d-%b-%Y").date()
             else:
-                base_date = datetime.strptime(f"{date_val}/{curr_dt.year}", "%d/%m/%Y").date()
+                # Định dạng 30/03/2026 hoặc 30/03
+                if len(date_val.split('/')) == 3:
+                    base_date = datetime.strptime(date_val, "%d/%m/%Y").date()
+                else:
+                    base_date = datetime.strptime(f"{date_val}/{now_vn.year}", "%d/%m/%Y").date()
         except:
-            base_date = curr_dt.date()
+            base_date = now_vn.date()
 
         def parse_time(t_str, b_date):
             if not t_str or t_str in ['____', 'nan', 'None', '', 'nan']:
                 return None
             t_str = t_str.replace(':', '')
-            return datetime.combine(b_date, datetime.strptime(t_str, '%H%M').time())
+            try:
+                # Xử lý trường hợp giờ là 2400 hoặc 0000
+                if t_str == '2400':
+                    return datetime.combine(b_date, datetime.min.time()) + timedelta(days=1)
+                return datetime.combine(b_date, datetime.strptime(t_str, '%H%M').time())
+            except:
+                return None
 
         t_arr = parse_time(arr_str, base_date)
         t_dep = parse_time(dep_str, base_date)
-        if not t_arr and t_dep:  return t_dep - timedelta(hours=1), t_dep
-        if t_arr and not t_dep:  return t_arr, t_arr + timedelta(hours=2)
+
+        # Logic xử lý qua đêm: Nếu DEP < ARR thì DEP là ngày hôm sau
         if t_arr and t_dep:
-            if t_dep < t_arr: t_dep += timedelta(days=1)
+            if t_dep < t_arr: 
+                t_dep += timedelta(days=1)
             return t_arr, t_dep
+        
+        # Nếu chỉ có ARR hoặc chỉ có DEP
+        if not t_arr and t_dep: return t_dep - timedelta(hours=1), t_dep
+        if t_arr and not t_dep: return t_arr, t_arr + timedelta(hours=2)
+        
         return None, None
     except:
         return None, None
@@ -228,6 +250,10 @@ if raw_input:
             st.session_state.df_final = df_raw
 
         df = st.session_state.df_final
+        # Thêm cột STT nếu chưa có
+        if 'STT' not in df.columns:
+            df.insert(0, 'STT', range(1, len(df) + 1))
+        
         df['DURATION'] = df.apply(
             lambda r: int((r['END_DT']-r['START_DT']).total_seconds()/60)
             if pd.notnull(r['START_DT']) and pd.notnull(r['END_DT']) else 0, axis=1
@@ -348,7 +374,7 @@ if raw_input:
             return styles
 
         readonly_cols = [c for c in ['FLIGHT','ROUTE','REG'] if c in df.columns]
-        view_cols = readonly_cols + ['START_DT','END_DT','CRS_ASSIGN','MECH_ASSIGN','STATUS']
+        view_cols = ['STT'] + readonly_cols + ['START_DT','END_DT','CRS_ASSIGN','MECH_ASSIGN','STATUS']
         view_cols = [c for c in view_cols if c in df.columns]
 
         styled_view = (
@@ -363,12 +389,12 @@ if raw_input:
 
         # ── Data editor chỉnh tay ─────────────────────────────────
         st.caption("✏️ Chỉnh phân công (CRS / MECH)  —  ô 🟠 cam = tương lai cần fix  |  🟡 vàng = quá khứ")
-        edit_src = df[readonly_cols + ['START_DT','END_DT','CRS_ASSIGN','MECH_ASSIGN','STATUS']].copy() \
-            if readonly_cols else df[['START_DT','END_DT','CRS_ASSIGN','MECH_ASSIGN','STATUS']].copy()
+        edit_src = df[view_cols].copy()
         edit_src['START_DT'] = edit_src['START_DT'].apply(lambda x: x.strftime('%H:%M') if pd.notnull(x) else '')
         edit_src['END_DT']   = edit_src['END_DT'].apply(  lambda x: x.strftime('%H:%M') if pd.notnull(x) else '')
 
         col_cfg = {
+            "STT":         st.column_config.NumberColumn("STT", disabled=True),
             "CRS_ASSIGN":  st.column_config.SelectboxColumn("CRS",    options=crs_opt),
             "MECH_ASSIGN": st.column_config.SelectboxColumn("MECH",   options=mech_opt),
             "STATUS":      st.column_config.TextColumn("Status"),
@@ -377,10 +403,6 @@ if raw_input:
         }
         for col in readonly_cols:
             col_cfg[col] = st.column_config.TextColumn(col, disabled=True)
-
-        # Thêm cột STT bắt đầu từ 1
-        edit_src.insert(0, 'STT', range(1, len(edit_src) + 1))
-        col_cfg['STT'] = st.column_config.NumberColumn("STT", disabled=True)
 
         edited = st.data_editor(edit_src, column_config=col_cfg,
                                 hide_index=True, use_container_width=True, key="editor")
