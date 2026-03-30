@@ -255,7 +255,7 @@ if raw_input:
         overlap_crs, overlap_mech = find_overlaps(df)
         all_overlap_idx = overlap_crs | overlap_mech
 
-        # ── HIỂN THỊ BẢNG VỚI TÔ VÀNG ───────────
+        # ── BẢNG PHÂN CÔNG (gộp xem + chỉnh) ────────────────
         st.subheader("📋 Bảng phân công")
 
         if all_overlap_idx:
@@ -292,28 +292,31 @@ if raw_input:
 
         # Tô vàng bằng Styler
         def highlight_overlap(row):
-            """Trả về list style cho từng ô trong row."""
-            styles = [''] * len(row)
+            styles    = [''] * len(row)
             col_names = list(row.index)
-            idx = row.name
-
-            yellow_bg = 'background-color: #FFF176; color: #7A6000;'
-
-            if idx in overlap_crs:
-                if 'CRS_ASSIGN' in col_names:
-                    styles[col_names.index('CRS_ASSIGN')] = yellow_bg
-            if idx in overlap_mech:
-                if 'MECH_ASSIGN' in col_names:
-                    styles[col_names.index('MECH_ASSIGN')] = yellow_bg
-
+            idx       = row.name
+            yellow    = 'background-color: #FFF176; color: #7A6000;'
+            if idx in overlap_crs  and 'CRS_ASSIGN'  in col_names:
+                styles[col_names.index('CRS_ASSIGN')]  = yellow
+            if idx in overlap_mech and 'MECH_ASSIGN' in col_names:
+                styles[col_names.index('MECH_ASSIGN')] = yellow
             return styles
 
-        # Chọn cột hiển thị hợp lý
-        display_cols = [c for c in df.columns if c not in ['START_DT', 'END_DT', 'DURATION']]
-        display_cols = display_cols + ['START_DT', 'END_DT', 'DURATION']
+        # Cột đọc-only để hiển thị context (không sửa được)
+        readonly_cols = []
+        for col in ['FLIGHT', 'ROUTE', 'REG']:
+            if col in df.columns:
+                readonly_cols.append(col)
 
-        styled_df = (
-            df[display_cols]
+        # Tạo df hiển thị gồm cột context + cột chỉnh
+        editor_cols = readonly_cols + ['START_DT', 'END_DT', 'CRS_ASSIGN', 'MECH_ASSIGN', 'STATUS']
+        editor_cols = [c for c in editor_cols if c in df.columns]
+
+        # Cột không được chỉnh
+        disabled_cols = readonly_cols + ['START_DT', 'END_DT']
+
+        styled_editor = (
+            df[editor_cols]
             .style
             .apply(highlight_overlap, axis=1)
             .format({
@@ -321,22 +324,34 @@ if raw_input:
                 'END_DT':   lambda x: x.strftime('%H:%M') if pd.notnull(x) else '',
             })
         )
-        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+        st.dataframe(styled_editor, use_container_width=True, hide_index=True)
 
-        # Data editor để chỉnh tay
-        st.caption("✏️ Chỉnh phân công bên dưới:")
+        # Editor chỉ chỉnh CRS/MECH/STATUS, có thêm cột tham chiếu
+        st.caption("✏️ Chỉnh phân công (chọn CRS / MECH bên dưới):")
+        edit_source = df[readonly_cols + ['START_DT', 'END_DT', 'CRS_ASSIGN', 'MECH_ASSIGN', 'STATUS']].copy() \
+            if readonly_cols else df[['START_DT', 'END_DT', 'CRS_ASSIGN', 'MECH_ASSIGN', 'STATUS']].copy()
+        edit_source['START_DT'] = edit_source['START_DT'].apply(
+            lambda x: x.strftime('%H:%M') if pd.notnull(x) else '')
+        edit_source['END_DT']   = edit_source['END_DT'].apply(
+            lambda x: x.strftime('%H:%M') if pd.notnull(x) else '')
+
+        col_cfg = {
+            "CRS_ASSIGN":  st.column_config.SelectboxColumn("CRS",      options=crs_opt),
+            "MECH_ASSIGN": st.column_config.SelectboxColumn("MECH",     options=mech_opt),
+            "STATUS":      st.column_config.TextColumn("Status"),
+            "START_DT":    st.column_config.TextColumn("Bắt đầu",       disabled=True),
+            "END_DT":      st.column_config.TextColumn("Kết thúc",      disabled=True),
+        }
+        for col in readonly_cols:
+            col_cfg[col] = st.column_config.TextColumn(col, disabled=True)
+
         edited = st.data_editor(
-            df[['CRS_ASSIGN', 'MECH_ASSIGN', 'STATUS']],
-            column_config={
-                "CRS_ASSIGN":  st.column_config.SelectboxColumn("CRS",    options=crs_opt),
-                "MECH_ASSIGN": st.column_config.SelectboxColumn("MECH",   options=mech_opt),
-                "STATUS":      st.column_config.TextColumn("Status"),
-            },
+            edit_source,
+            column_config=col_cfg,
             hide_index=False,
             use_container_width=True,
             key="editor"
         )
-        # Đồng bộ chỉnh sửa về df_final
         df['CRS_ASSIGN']  = edited['CRS_ASSIGN']
         df['MECH_ASSIGN'] = edited['MECH_ASSIGN']
         df['STATUS']      = edited['STATUS']
@@ -385,16 +400,19 @@ if raw_input:
                         (idx in overlap_crs  and role == 'CRS_ASSIGN') or
                         (idx in overlap_mech and role == 'MECH_ASSIGN')
                     )
+                    start_str = r['START_DT'].strftime('%H:%M') if pd.notnull(r['START_DT']) else ''
+                    end_str   = r['END_DT'].strftime('%H:%M')   if pd.notnull(r['END_DT'])   else ''
                     c_data.append({
-                        "Nhân viên": r[role],
-                        "Bắt đầu":   r['START_DT'],
-                        "Kết thúc":  r['END_DT'],
-                        "Loại":      role_label,
-                        "Chuyến":    str(r.get('FLIGHT', '')),
-                        "Tuyến":     str(r.get('ROUTE',  '')),
-                        "Reg":       str(r.get('REG',    '')),
-                        "Thời lượng": f"{int((r['END_DT'] - r['START_DT']).total_seconds() / 60)} phút",
-                        "Overlap":   "⚠️ TRÙNG CA" if is_overlap else "✅ OK",
+                        "Nhân viên":  r[role],
+                        "Bắt đầu":    r['START_DT'],
+                        "Kết thúc":   r['END_DT'],
+                        "Loại":       role_label,
+                        "Chuyến":     str(r.get('FLIGHT', '')),
+                        "Tuyến":      str(r.get('ROUTE',  '')),
+                        "Reg":        str(r.get('REG',    '')),
+                        "Giờ bắt đầu": start_str,
+                        "Giờ kết thúc": end_str,
+                        "Overlap":    "⚠️ TRÙNG CA" if is_overlap else "✅ OK",
                     })
 
         if c_data:
@@ -409,18 +427,18 @@ if raw_input:
                 color="Loại",
                 color_discrete_map={"CRS": "#1f77b4", "MECH": "#ff7f0e"},
                 # custom_data để tooltip tùy chỉnh
-                custom_data=["Chuyến", "Tuyến", "Reg", "Nhân viên", "Bắt đầu", "Kết thúc", "Overlap"],
+                custom_data=["Chuyến", "Tuyến", "Reg", "Nhân viên", "Giờ bắt đầu", "Giờ kết thúc", "Overlap"],
             )
 
-            # Tooltip tùy chỉnh đầy đủ thông tin
+            # Tooltip tùy chỉnh - dùng string đã format sẵn, không dùng datetime
             fig_g.update_traces(
                 hovertemplate=(
                     "<b>✈️ Chuyến: %{customdata[0]}</b><br>"
-                    "🗺️ Tuyến:   %{customdata[1]}<br>"
-                    "🔖 Reg:     %{customdata[2]}<br>"
-                    "👤 NV:      %{customdata[3]}<br>"
-                    "⏱ Bắt đầu: %{customdata[4]|%H:%M}<br>"
-                    "⏹ Kết thúc: %{customdata[5]|%H:%M}<br>"
+                    "🗺️ Tuyến:    %{customdata[1]}<br>"
+                    "🔖 Reg:      %{customdata[2]}<br>"
+                    "👤 NV:       %{customdata[3]}<br>"
+                    "⏱ Bắt đầu:  %{customdata[4]}<br>"
+                    "⏹ Kết thúc: %{customdata[5]}<br>"
                     "📌 Trạng thái: %{customdata[6]}"
                     "<extra></extra>"
                 )
