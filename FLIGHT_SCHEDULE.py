@@ -307,6 +307,44 @@ if raw_input:
             st.session_state.df_final = df_raw
 
         df = st.session_state.df_final
+
+        # ─── XỬ LÝ CẬP NHẬT TỪ EDITOR (Đưa lên đầu) ────────────────
+        if 'editor' in st.session_state and st.session_state.editor.get('edited_rows'):
+            edited_rows = st.session_state.editor['edited_rows']
+            for idx_str, changes in edited_rows.items():
+                idx = int(idx_str)
+                row_now = df.loc[idx]
+                
+                # Cập nhật giờ nếu có thay đổi
+                def parse_editor_time(time_str, original_dt):
+                    if not time_str or not original_dt: return original_dt
+                    try:
+                        time_str = time_str.replace(':', '')
+                        if len(time_str) != 4: return original_dt
+                        new_time = datetime.strptime(time_str, '%H%M').time()
+                        return datetime.combine(original_dt.date(), new_time)
+                    except: return original_dt
+
+                if 'START_DT' in changes:
+                    df.at[idx, 'START_DT'] = parse_editor_time(changes['START_DT'], row_now['START_DT'])
+                if 'END_DT' in changes:
+                    df.at[idx, 'END_DT']   = parse_editor_time(changes['END_DT'],   row_now['END_DT'])
+                
+                # Xử lý qua đêm sau khi cập nhật giờ
+                if df.at[idx, 'END_DT'] < df.at[idx, 'START_DT']:
+                    df.at[idx, 'END_DT'] += timedelta(days=1)
+                
+                # Cập nhật các cột khác
+                if 'MAINT' in changes:       df.at[idx, 'MAINT']       = bool(changes['MAINT'])
+                if 'CRS_ASSIGN' in changes:  df.at[idx, 'CRS_ASSIGN']  = ", ".join(changes['CRS_ASSIGN'])
+                if 'MECH_ASSIGN' in changes: df.at[idx, 'MECH_ASSIGN'] = ", ".join(changes['MECH_ASSIGN'])
+                if 'STATUS' in changes:      df.at[idx, 'STATUS']      = changes['STATUS']
+                
+                # Tính lại duration
+                df.at[idx, 'DURATION'] = int((df.at[idx, 'END_DT'] - df.at[idx, 'START_DT']).total_seconds() / 60)
+            
+            st.session_state.df_final = df
+
         # Thêm cột STT nếu chưa có
         if 'STT' not in df.columns:
             df.insert(0, 'STT', range(1, len(df) + 1))
@@ -464,34 +502,7 @@ if raw_input:
                                 hide_index=True, use_container_width=True, key="editor",
                                 height=600)
 
-        # ★★★ Cập nhật ngược lại df_final
-        for idx in df.index:
-            row_now = df.loc[idx]
-            
-            def parse_editor_time(time_str, original_dt):
-                if not time_str or not original_dt: return original_dt
-                try:
-                    time_str = time_str.replace(':', '')
-                    if len(time_str) != 4: return original_dt
-                    new_time = datetime.strptime(time_str, '%H%M').time()
-                    return datetime.combine(original_dt.date(), new_time)
-                except:
-                    return original_dt
-
-            new_start = parse_editor_time(edited.at[idx, 'START_DT'], row_now['START_DT'])
-            new_end   = parse_editor_time(edited.at[idx, 'END_DT'],   row_now['END_DT'])
-            
-            if new_end < new_start:
-                new_end += timedelta(days=1)
-                
-            df.at[idx, 'START_DT']    = new_start
-            df.at[idx, 'END_DT']      = new_end
-            df.at[idx, 'MAINT']       = bool(edited.at[idx, 'MAINT'])
-            df.at[idx, 'CRS_ASSIGN']  = ", ".join(edited.at[idx, 'CRS_ASSIGN'])
-            df.at[idx, 'MECH_ASSIGN'] = ", ".join(edited.at[idx, 'MECH_ASSIGN'])
-            df.at[idx, 'STATUS']      = edited.at[idx, 'STATUS']
-            df.at[idx, 'DURATION']    = int((new_end - new_start).total_seconds() / 60)
-
+        # Logic cập nhật cũ đã được đưa lên đầu, không cần lặp lại ở đây.
         st.divider()
 
         st.divider()
@@ -595,22 +606,29 @@ if raw_input:
             if fig_mech: st.plotly_chart(fig_mech, use_container_width=True)
 
         # ── Báo cáo diễn giải ─────────────────────────────────────
-        with st.expander("📝 Báo cáo Manpower — Diễn giải & Xin thêm nhân lực", expanded=False):
+            with st.expander("📝 Báo cáo Manpower — Diễn giải & Xin thêm nhân lực", expanded=False):
 
-            def find_shortage_periods(df_step, capacity):
-                periods, in_sh, t0, mx = [], False, None, 0
-                for _, rp in df_step.iterrows():
-                    if rp['Count'] > capacity:
-                        if not in_sh: in_sh=True; t0=rp['Time']; mx=rp['Count']
-                        else: mx = max(mx, int(rp['Count']))
-                    else:
-                        if in_sh: periods.append((t0, rp['Time'], int(mx))); in_sh=False; mx=0
-                return periods
+                def find_shortage_periods(df_step, capacity):
+                    periods, in_sh, t0, mx = [], False, None, 0
+                    for _, rp in df_step.iterrows():
+                        if rp['Count'] > capacity:
+                            if not in_sh: in_sh=True; t0=rp['Time']; mx=rp['Count']
+                            else: mx = max(mx, int(rp['Count']))
+                        else:
+                            if in_sh: periods.append((t0, rp['Time'], int(mx))); in_sh=False; mx=0
+                    return periods
 
-            sh_crs  = find_shortage_periods(df_crs_step,  num_crs)  if not df_crs_step.empty  else []
-            sh_mech = find_shortage_periods(df_mech_step, num_mech) if not df_mech_step.empty else []
+                sh_crs  = find_shortage_periods(df_crs_step,  num_crs)  if not df_crs_step.empty  else []
+                sh_mech = find_shortage_periods(df_mech_step, num_mech) if not df_mech_step.empty else []
 
-            st.markdown(f"""
+                report_text = f"Đơn vị: VJ DAD-LINE MAINTENANCE\n"
+                report_text += f"BÁO CÁO NHU CẦU NHÂN LỰC CA LÀM {now_vn.strftime('%d/%m/%Y')}\n"
+                report_text += f"{'='*40}\n\n"
+                report_text += f"1. TỔNG QUAN LỊCH BAY:\n"
+                report_text += f"   - Tổng số chuyến: {total_flights} chuyến\n"
+                report_text += f"   - CRS hiện có: {num_crs} | MECH hiện có: {num_mech}\n\n"
+
+                st.markdown(f"""
 **Đơn vị:** VJ DAD-LINE MAINTENANCE, CA LÀM {now_vn.strftime('%d/%m/%Y')}
 
 ---
@@ -626,41 +644,58 @@ if raw_input:
 | MECH | **{num_mech}** | **{peak_mech}** | **{def_mech if def_mech>0 else "—"}** |
 """)
 
-            for label, sh_list, capacity, deficit in [
-                ("CRS", sh_crs, num_crs, def_crs),
-                ("MECH", sh_mech, num_mech, def_mech)
-            ]:
-                if sh_list:
-                    st.markdown(f"#### 3. Khung giờ thiếu {label}")
-                    rows_sh = [{'Từ': ts.strftime('%H:%M'), 'Đến': te.strftime('%H:%M'),
-                                'Thời lượng': f"{int((te-ts).total_seconds()//60)} phút",
-                                'Cần tối đa': f"{mx} {label}", 'Thiếu': f"{mx-capacity} người"}
-                               for ts, te, mx in sh_list]
-                    st.dataframe(pd.DataFrame(rows_sh), hide_index=True, use_container_width=True)
-                    
-                    # Tìm các tàu MAINT trong khung giờ thiếu
-                    t0_str = sh_list[0][0].strftime('%H:%M')
-                    t1_str = sh_list[-1][1].strftime('%H:%M')
-                    
-                    maint_details = []
-                    for ts, te, mx in sh_list:
-                        m_ships = df[
-                            (df['MAINT'] == True) & 
-                            (df['START_DT'] < te) & (df['END_DT'] > ts)
-                        ]
-                        for _, ms in m_ships.iterrows():
-                            detail = f"Tàu **{ms['REG']}** ({ms['FLIGHT']}) bảo dưỡng lúc **{ms['START_DT'].strftime('%H:%M')}–{ms['END_DT'].strftime('%H:%M')}**"
-                            if detail not in maint_details:
-                                maint_details.append(detail)
-                    
-                    st.info(
-                        f"**Kiến nghị {label}:** Đề nghị bổ sung thêm **{deficit} {label}** "
-                        f"trong khung giờ cao điểm **{t0_str}–{t1_str}**.\n\n"
-                        + ("**Lý do cụ thể:**\n- " + "\n- ".join(maint_details) if maint_details else "") +
-                        f"\n\nViệc bổ sung nhân lực nhằm đảm bảo các gói bảo dưỡng phát sinh và an toàn kỹ thuật bay đúng quy trình."
-                    )
-                else:
-                    st.success(f"✅ {label}: Lực lượng hiện tại đủ đáp ứng cả ngày.")
+                for label, sh_list, capacity, deficit, buf_val in [
+                    ("CRS", sh_crs, num_crs, def_crs, buffer_crs),
+                    ("MECH", sh_mech, num_mech, def_mech, buffer_mech)
+                ]:
+                    report_text += f"2. NHU CẦU {label}:\n"
+                    if sh_list:
+                        st.markdown(f"#### 3. Khung giờ thiếu {label}")
+                        rows_sh = [{'Từ': ts.strftime('%H:%M'), 'Đến': te.strftime('%H:%M'),
+                                    'Thời lượng': f"{int((te-ts).total_seconds()//60)} phút",
+                                    'Cần tối đa': f"{mx} {label}", 'Thiếu': f"{mx-capacity} người"}
+                                   for ts, te, mx in sh_list]
+                        st.dataframe(pd.DataFrame(rows_sh), hide_index=True, use_container_width=True)
+                        
+                        # Tìm các tàu MAINT trong khung giờ thiếu
+                        t0_str = sh_list[0][0].strftime('%H:%M')
+                        t1_str = sh_list[-1][1].strftime('%H:%M')
+                        
+                        maint_details = []
+                        for ts, te, mx in sh_list:
+                            m_ships = df[
+                                (df['MAINT'] == True) & 
+                                (df['START_DT'] < te) & (df['END_DT'] > ts)
+                            ]
+                            for _, ms in m_ships.iterrows():
+                                detail = f"Tàu {ms['REG']} ({ms['FLIGHT']}) bảo dưỡng {ms['START_DT'].strftime('%H:%M')}–{ms['END_DT'].strftime('%H:%M')}"
+                                if detail not in maint_details:
+                                    maint_details.append(detail)
+                        
+                        reason_str = ""
+                        if maint_details:
+                            reason_str = "\n   * Lý do: Có gói bảo dưỡng phát sinh:\n     - " + "\n     - ".join(maint_details)
+                        
+                        rec_msg = (
+                            f"Đề nghị bổ sung thêm {deficit} {label} trong khung giờ cao điểm {t0_str}–{t1_str}."
+                            f"{reason_str}\n"
+                            f"   * Ghi chú dự toán: Đã bao gồm định mức dự phòng +{buf_val} {label}/chuyến bảo dưỡng."
+                        )
+                        
+                        st.info(f"**Kiến nghị {label}:** {rec_msg}")
+                        report_text += f"   - Tình trạng: THIẾU {deficit} người\n"
+                        report_text += f"   - Kiến nghị: {rec_msg}\n\n"
+                    else:
+                        st.success(f"✅ {label}: Lực lượng hiện tại đủ đáp ứng cả ngày.")
+                        report_text += f"   - Tình trạng: Đủ đáp ứng.\n\n"
+
+                report_text += f"{'='*40}\n"
+                report_text += f"Báo cáo được trích xuất từ ACD DAD v3.57 (Optimized)"
+
+                st.divider()
+                st.subheader("📋 Copy Báo cáo gửi sếp")
+                st.caption("Nhấn nút Copy ở góc phải khối code dưới đây và dán vào Zalo/Email")
+                st.code(report_text, language="text")
 
         # ═══════════════════════════════════════════════════════════
         # TIMELINE CHART
