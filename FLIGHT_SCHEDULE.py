@@ -289,6 +289,7 @@ if raw_input:
             res = df_raw.apply(lambda r: pd.Series(calculate_work_window(r)), axis=1)
             df_raw['START_DT'], df_raw['END_DT'] = res[0], res[1]
             df_raw['CRS_ASSIGN'] = ""; df_raw['MECH_ASSIGN'] = ""; df_raw['STATUS'] = "⚪"
+            df_raw['MAINT'] = False  # Cột đánh dấu bảo dưỡng
             st.session_state.df_final = df_raw
 
         df = st.session_state.df_final
@@ -376,8 +377,8 @@ if raw_input:
             )
 
         # ─── GIẢI QUYẾT XUNG ĐỘT & BẢO DƯỠNG ────────────────────────
-        # Tìm các chuyến bảo dưỡng (Duration >= 120p) hoặc có xung đột tương lai
-        maint_flights = df[df['DURATION'] >= 120].index.tolist()
+        # Tìm các chuyến được đánh dấu bảo dưỡng (MAINT) hoặc có xung đột tương lai
+        maint_flights = df[df.get('MAINT', False) == True].index.tolist()
         fix_needed_idx = sorted(list(future_ov_all | set(maint_flights)))
 
         if fix_needed_idx:
@@ -391,7 +392,7 @@ if raw_input:
                 t_e = row['END_DT'].strftime('%H:%M')   if pd.notnull(row['END_DT'])   else ''
                 
                 is_overlap = idx in future_ov_all
-                is_maint   = dur >= 120
+                is_maint   = row.get('MAINT', False)
                 
                 # Tiêu đề container dựa trên loại hỗ trợ
                 label = "🛠️ BẢO DƯỠNG" if is_maint else "⚠️ TRÙNG LỊCH"
@@ -457,7 +458,7 @@ if raw_input:
             return styles
 
         readonly_cols = [c for c in ['FLIGHT','ROUTE','REG'] if c in df.columns]
-        view_cols = ['STT'] + readonly_cols + ['START_DT','END_DT','DURATION','CRS_ASSIGN','MECH_ASSIGN','STATUS']
+        view_cols = ['STT'] + readonly_cols + ['START_DT','END_DT','DURATION','MAINT','CRS_ASSIGN','MECH_ASSIGN','STATUS']
         view_cols = [c for c in view_cols if c in df.columns]
 
         styled_view = (
@@ -484,6 +485,7 @@ if raw_input:
         col_cfg = {
             "STT":         st.column_config.NumberColumn("STT", disabled=True),
             "DURATION":    st.column_config.NumberColumn("Dur", disabled=True, format="%d p"),
+            "MAINT":       st.column_config.CheckboxColumn("Maint", help="Đánh dấu chuyến cần làm bảo dưỡng bổ sung"),
             "CRS_ASSIGN":  st.column_config.MultiselectColumn("CRS", options=crs_opt[1:]),
             "MECH_ASSIGN": st.column_config.MultiselectColumn("MECH", options=mech_opt[1:]),
             "STATUS":      st.column_config.TextColumn("Status"),
@@ -519,7 +521,8 @@ if raw_input:
             df.at[idx, 'START_DT']    = new_start
             df.at[idx, 'END_DT']      = new_end
             
-            # Chuyển list từ Multiselect về dạng chuỗi phẩy để lưu trữ
+            # Cập nhật các cột khác
+            df.at[idx, 'MAINT']       = bool(edited.at[idx, 'MAINT'])
             df.at[idx, 'CRS_ASSIGN']  = ", ".join(edited.at[idx, 'CRS_ASSIGN'])
             df.at[idx, 'MECH_ASSIGN'] = ", ".join(edited.at[idx, 'MECH_ASSIGN'])
             df.at[idx, 'STATUS']      = edited.at[idx, 'STATUS']
