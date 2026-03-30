@@ -201,28 +201,51 @@ if raw_input:
         c_data = []
         for role in ['CRS_ASSIGN', 'MECH_ASSIGN']:
             for _, r in df.iterrows():
+                # Chỉ lấy những chuyến đã được phân công
                 if pd.notnull(r['START_DT']) and r[role] and str(r[role]).lower() not in ['nan', '']:
-                    c_data.append({"Nhân viên": r[role], "Bắt đầu": r['START_DT'], "Kết thúc": r['END_DT'], "Loại": role[:3]})
+                    # BƯỚC 1: ĐƯA THÊM DỮ LIỆU CHUYẾN BAY VÀO ĐÂY
+                    c_data.append({
+                        "Nhân viên": r[role],
+                        "Bắt đầu": r['START_DT'],
+                        "Kết thúc": r['END_DT'],
+                        "Loại": role[:3], # CRS hoặc MEC
+                        # Các cột mới thêm
+                        "Chuyến bay": r.get('FLIGHT', 'N/A'),
+                        "Tuyến đường": r.get('ROUTE', 'N/A'),
+                        "Tàu bay": r.get('REG', 'N/A')
+                    })
         
         if c_data:
             df_g = pd.DataFrame(c_data)
-            fig_g = px.timeline(df_g, x_start="Bắt đầu", x_end="Kết thúc", y="Nhân viên", color="Loại")
+            
+            # BƯỚC 2: SỬ DỤNG HOVER_DATA ĐỂ CHỈ ĐỊNH CÁC CỘT HIỂN THỊ
+            fig_g = px.timeline(
+                df_g, 
+                x_start="Bắt đầu", 
+                x_end="Kết thúc", 
+                y="Nhân viên", 
+                color="Loại",
+                hover_data=["Chuyến bay", "Tuyến đường", "Tàu bay"] # <--- Thêm dòng này
+            )
+            
+            # BƯỚC 3: TÙY CHỈNH ĐỊNH DẠNG HOVER (Tùy chọn nhưng nên làm)
+            # Ẩn các cột mặc định (Bắt đầu, Kết thúc, Nhân viên) để bảng Info gọn hơn
+            fig_g.update_traces(
+                hovertemplate="<br>".join([
+                    "<b>Chuyến bay:</b> %{customdata[0]}",
+                    "<b>Tuyến:</b> %{customdata[1]}",
+                    "<b>Tàu bay:</b> %{customdata[2]}",
+                    "<b>Thời gian:</b> %{x|%H:%M} - %{base|%H:%M}", # Giờ bắt đầu - Giờ kết thúc
+                    "<b>Nhân viên:</b> %{y}"
+                ])
+            )
+
             fig_g.update_layout(xaxis_type='date')
-            # Vạch NOW ĐẬM
-            fig_g.add_shape(
-                type="line", 
-                x0=now_ts, x1=now_ts, 
-                y0=0, y1=1, 
-                yref="paper", 
-                line=dict(color="Red", width=4)
-            )
-            fig_g.add_annotation(
-                x=now_ts, y=1.1, 
-                yref="paper", 
-                text=f"BÂY GIỜ (ICT): {now_vn.strftime('%H:%M')}", 
-                font=dict(color="red", size=12), 
-                showarrow=False
-            )
+            
+            # Vạch NOW ĐẬM (Fix giờ VN)
+            fig_g.add_shape(type="line", x0=now_ts, x1=now_ts, y0=0, y1=1, yref="paper", line=dict(color="Red", width=4))
+            fig_g.add_annotation(x=now_ts, y=1.1, yref="paper", text=f"BÂY GIỜ (ICT): {now_vn.strftime('%H:%M')}", font=dict(color="red", size=12), showarrow=False)
+            
             fig_g.update_yaxes(autorange="reversed")
             st.plotly_chart(fig_g, use_container_width=True)
 
