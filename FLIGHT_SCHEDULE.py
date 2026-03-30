@@ -375,47 +375,66 @@ if raw_input:
                 f"🟡 Quá khứ ghi nhận: **{len(past_ov_all)}**"
             )
 
-        # ─── GIẢI QUYẾT XUNG ĐỘT ───────────────────────────────────
-        if future_ov_all:
-            st.markdown("### 💡 Gợi ý thay thế nhân sự (Trùng lịch)")
-            for idx in sorted(future_ov_all):
+        # ─── GIẢI QUYẾT XUNG ĐỘT & BẢO DƯỠNG ────────────────────────
+        # Tìm các chuyến bảo dưỡng (Duration >= 120p) hoặc có xung đột tương lai
+        maint_flights = df[df['DURATION'] >= 120].index.tolist()
+        fix_needed_idx = sorted(list(future_ov_all | set(maint_flights)))
+
+        if fix_needed_idx:
+            st.markdown("### 💡 Gợi ý điều phối nhân sự")
+            for idx in fix_needed_idx:
                 row = df.loc[idx]
                 flt = str(row.get('FLIGHT', idx))
                 reg = str(row.get('REG', ''))
+                dur = row['DURATION']
                 t_s = row['START_DT'].strftime('%H:%M') if pd.notnull(row['START_DT']) else ''
                 t_e = row['END_DT'].strftime('%H:%M')   if pd.notnull(row['END_DT'])   else ''
                 
-                # Xác định role nào bị trùng
-                roles_to_fix = []
-                if idx in future_ov_crs:  roles_to_fix.append(('CRS',  'CRS_ASSIGN',  crs_opt))
-                if idx in future_ov_mech: roles_to_fix.append(('MECH', 'MECH_ASSIGN', mech_opt))
+                is_overlap = idx in future_ov_all
+                is_maint   = dur >= 120
                 
-                for role_label, role_col, opt in roles_to_fix:
-                    current_staff = row[role_col]
-                    candidates = get_available_ranked(df, idx, role_col, opt)
+                # Tiêu đề container dựa trên loại hỗ trợ
+                label = "🛠️ BẢO DƯỠNG" if is_maint else "⚠️ TRÙNG LỊCH"
+                if is_overlap and is_maint: label = "🛠️ BẢO DƯỠNG & ⚠️ TRÙNG"
+
+                with st.container(border=True):
+                    c_info, c_fix_crs, c_fix_mech = st.columns([1.2, 2, 2])
                     
-                    with st.container(border=True):
-                        c_info, c_fix = st.columns([1, 2])
-                        with c_info:
-                            st.markdown(f"**{flt}** ({reg})")
-                            st.caption(f"🕒 {t_s} → {t_e} | **{role_label}**")
-                            st.error(f"Xung đột: **{current_staff}**")
-                        
-                        with c_fix:
+                    with c_info:
+                        st.markdown(f"**{label}**")
+                        st.markdown(f"**{flt}** ({reg})")
+                        st.caption(f"🕒 {t_s} → {t_e} ({dur}p)")
+                        if is_overlap:
+                            st.error("Xung đột!")
+
+                    # Gợi ý cho cả 2 role
+                    for role_label, role_col, opt, col_ui in [
+                        ('CRS', 'CRS_ASSIGN', crs_opt, c_fix_crs),
+                        ('MECH', 'MECH_ASSIGN', mech_opt, c_fix_mech)
+                    ]:
+                        with col_ui:
+                            current_staff_list = process_names(str(row[role_col]))
+                            candidates = get_available_ranked(df, idx, role_col, opt)
+                            
+                            st.markdown(f"**{role_label}**: `{', '.join(current_staff_list) if current_staff_list else 'Trống'}`")
+                            
                             if candidates:
-                                st.caption("Nhân sự rảnh (xếp theo tải trọng thấp nhất):")
-                                # Hiển thị tối đa 4 người rảnh nhất dưới dạng nút bấm nhanh
-                                cols = st.columns(len(candidates[:4]))
-                                for i, cand in enumerate(candidates[:4]):
-                                    with cols[i]:
+                                available_new = [c for c in candidates if c['Tên'] not in current_staff_list]
+                                if available_new:
+                                    st.caption("Gợi ý bổ sung (tải thấp):")
+                                    # Hiển thị 3 người rảnh nhất
+                                    for cand in available_new[:3]:
                                         name = cand['Tên']
                                         load = cand['Tải trọng (phút)']
-                                        if st.button(f"✅ {name}\n({load}p)", key=f"fix_{idx}_{role_col}_{name}"):
-                                            df.at[idx, role_col] = name
-                                            df.at[idx, 'STATUS'] = "✨ Fix"
+                                        if st.button(f"+ {name} ({load}p)", key=f"add_{idx}_{role_col}_{name}"):
+                                            new_list = current_staff_list + [name]
+                                            df.at[idx, role_col] = ", ".join(new_list)
+                                            df.at[idx, 'STATUS'] = "✨ Support"
                                             st.rerun()
+                                else:
+                                    st.warning("Hết người rảnh")
                             else:
-                                st.warning("❌ Không có nhân sự rảnh trong khung giờ này")
+                                st.warning("Không có người rảnh")
         st.divider()
 
         # ── Styler tô màu ──────────────────────────────────────────
