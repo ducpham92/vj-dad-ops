@@ -116,6 +116,9 @@ def suggest_replacement(df, idx, role, options):
     """Tìm người thay thế không bị trùng ca với chuyến idx."""
     row = df.loc[idx]
     if pd.isnull(row['START_DT']): return None
+    
+    # Tính tải trọng cho tất cả nhân sự rảnh
+    candidates = []
     for name in options:
         if not name: continue
         conflict = df[
@@ -123,8 +126,34 @@ def suggest_replacement(df, idx, role, options):
             df['START_DT'].notna() &
             (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])
         ]
-        if conflict.empty: return name
+        if conflict.empty:
+            workload = int(df[df[role] == name]['DURATION'].sum())
+            candidates.append((name, workload))
+    
+    # Ưu tiên người ít việc nhất
+    if candidates:
+        candidates.sort(key=lambda x: x[1])
+        return candidates[0][0]
     return None
+
+
+def get_available_ranked(df, idx, role, options):
+    """Trả về danh sách tất cả người rảnh, kèm tải trọng, đã xếp hạng."""
+    row = df.loc[idx]
+    if pd.isnull(row['START_DT']): return []
+    
+    res = []
+    for name in options:
+        if not name: continue
+        conflict = df[
+            (df[role] == name) & (df.index != idx) &
+            df['START_DT'].notna() &
+            (df['START_DT'] < row['END_DT']) & (df['END_DT'] > row['START_DT'])
+        ]
+        if conflict.empty:
+            workload = int(df[df[role] == name]['DURATION'].sum())
+            res.append({'Tên': name, 'Tải trọng (phút)': workload})
+    return sorted(res, key=lambda x: x['Tải trọng (phút)'])
 
 
 def is_future(row, now):
@@ -334,26 +363,48 @@ if raw_input:
                 f"🟡 Quá khứ ghi nhận: **{len(past_ov_all)}**"
             )
 
-        # Gợi ý thay thế — CHỈ cho chuyến tương lai
+        # ─── GIẢI QUYẾT XUNG ĐỘT ───────────────────────────────────
         if future_ov_all:
-            suggestions = []
+            st.markdown("### 💡 Gợi ý thay thế nhân sự (Trùng lịch)")
             for idx in sorted(future_ov_all):
                 row = df.loc[idx]
                 flt = str(row.get('FLIGHT', idx))
+                reg = str(row.get('REG', ''))
                 t_s = row['START_DT'].strftime('%H:%M') if pd.notnull(row['START_DT']) else ''
                 t_e = row['END_DT'].strftime('%H:%M')   if pd.notnull(row['END_DT'])   else ''
-                if idx in future_ov_crs:
-                    sug = suggest_replacement(df, idx, 'CRS_ASSIGN', crs_opt[1:])
-                    suggestions.append({'Chuyến': flt, 'Giờ': f"{t_s}→{t_e}", 'Role': 'CRS',
-                                        'Hiện tại': row['CRS_ASSIGN'],
-                                        'Gợi ý thay': sug or '❌ Không có người rảnh'})
-                if idx in future_ov_mech:
-                    sug = suggest_replacement(df, idx, 'MECH_ASSIGN', mech_opt[1:])
-                    suggestions.append({'Chuyến': flt, 'Giờ': f"{t_s}→{t_e}", 'Role': 'MECH',
-                                        'Hiện tại': row['MECH_ASSIGN'],
-                                        'Gợi ý thay': sug or '❌ Không có người rảnh'})
-            with st.expander("💡 Gợi ý nhân sự thay thế (chỉ chuyến tương lai)", expanded=True):
-                st.dataframe(pd.DataFrame(suggestions), hide_index=True, use_container_width=True)
+                
+                # Xác định role nào bị trùng
+                roles_to_fix = []
+                if idx in future_ov_crs:  roles_to_fix.append(('CRS',  'CRS_ASSIGN',  crs_opt))
+                if idx in future_ov_mech: roles_to_fix.append(('MECH', 'MECH_ASSIGN', mech_opt))
+                
+                for role_label, role_col, opt in roles_to_fix:
+                    current_staff = row[role_col]
+                    candidates = get_available_ranked(df, idx, role_col, opt)
+                    
+                    with st.container(border=True):
+                        c_info, c_fix = st.columns([1, 2])
+                        with c_info:
+                            st.markdown(f"**{flt}** ({reg})")
+                            st.caption(f"🕒 {t_s} → {t_e} | **{role_label}**")
+                            st.error(f"Xung đột: **{current_staff}**")
+                        
+                        with c_fix:
+                            if candidates:
+                                st.caption("Nhân sự rảnh (xếp theo tải trọng thấp nhất):")
+                                # Hiển thị tối đa 4 người rảnh nhất dưới dạng nút bấm nhanh
+                                cols = st.columns(len(candidates[:4]))
+                                for i, cand in enumerate(candidates[:4]):
+                                    with cols[i]:
+                                        name = cand['Tên']
+                                        load = cand['Tải trọng (phút)']
+                                        if st.button(f"✅ {name}\n({load}p)", key=f"fix_{idx}_{role_col}_{name}"):
+                                            df.at[idx, role_col] = name
+                                            df.at[idx, 'STATUS'] = "✨ Fix"
+                                            st.rerun()
+                            else:
+                                st.warning("❌ Không có nhân sự rảnh trong khung giờ này")
+        st.divider()
 
         # ── Styler tô màu ──────────────────────────────────────────
         # 🟠 Cam đậm  = overlap tương lai (cần fix ngay)
@@ -399,8 +450,8 @@ if raw_input:
             "CRS_ASSIGN":  st.column_config.SelectboxColumn("CRS",    options=crs_opt),
             "MECH_ASSIGN": st.column_config.SelectboxColumn("MECH",   options=mech_opt),
             "STATUS":      st.column_config.TextColumn("Status"),
-            "START_DT":    st.column_config.TextColumn("Bắt đầu",     disabled=True),
-            "END_DT":      st.column_config.TextColumn("Kết thúc",    disabled=True),
+            "START_DT":    st.column_config.TextColumn("Bắt đầu"), # Cho phép sửa giờ
+            "END_DT":      st.column_config.TextColumn("Kết thúc"), # Cho phép sửa giờ
         }
         for col in readonly_cols:
             col_cfg[col] = st.column_config.TextColumn(col, disabled=True)
@@ -408,14 +459,38 @@ if raw_input:
         edited = st.data_editor(edit_src, column_config=col_cfg,
                                 hide_index=True, use_container_width=True, key="editor")
 
-        # ★★★ Khi user chỉnh tay: chỉ cho phép thay đổi chuyến TƯƠNG LAI
+        # ★★★ Khi user chỉnh tay: Cập nhật ngược lại df_final (bao gồm cả giờ)
         for idx in df.index:
             row_now = df.loc[idx]
-            if is_future(row_now, now_vn):
-                df.at[idx, 'CRS_ASSIGN']  = edited.at[idx, 'CRS_ASSIGN']
-                df.at[idx, 'MECH_ASSIGN'] = edited.at[idx, 'MECH_ASSIGN']
-                df.at[idx, 'STATUS']      = edited.at[idx, 'STATUS']
-            # Quá khứ: KHÔNG ghi đè — giữ nguyên giá trị trong df
+            
+            # Hàm phụ parse giờ từ editor
+            def parse_editor_time(time_str, original_dt):
+                if not time_str or not original_dt: return original_dt
+                try:
+                    time_str = time_str.replace(':', '')
+                    if len(time_str) != 4: return original_dt
+                    new_time = datetime.strptime(time_str, '%H%M').time()
+                    # Giữ nguyên ngày của original_dt
+                    return datetime.combine(original_dt.date(), new_time)
+                except:
+                    return original_dt
+
+            # Cập nhật START_DT, END_DT
+            new_start = parse_editor_time(edited.at[idx, 'START_DT'], row_now['START_DT'])
+            new_end   = parse_editor_time(edited.at[idx, 'END_DT'],   row_now['END_DT'])
+            
+            # Xử lý nếu end < start (qua đêm)
+            if new_end < new_start:
+                new_end += timedelta(days=1)
+                
+            df.at[idx, 'START_DT']    = new_start
+            df.at[idx, 'END_DT']      = new_end
+            df.at[idx, 'CRS_ASSIGN']  = edited.at[idx, 'CRS_ASSIGN']
+            df.at[idx, 'MECH_ASSIGN'] = edited.at[idx, 'MECH_ASSIGN']
+            df.at[idx, 'STATUS']      = edited.at[idx, 'STATUS']
+            
+            # Recalculate duration
+            df.at[idx, 'DURATION'] = int((new_end - new_start).total_seconds() / 60)
 
         st.divider()
 
