@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="VJ DAD v1.0 (Optimized)", layout="wide")
+st.set_page_config(page_title="ACD DAD v3.57 (Optimized)", layout="wide")
 
 # 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM (UTC+7)
 now_vn = datetime.now(timezone(timedelta(hours=7))).replace(tzinfo=None)
@@ -182,19 +182,24 @@ def is_future(row, now):
 def build_step_events(df_src, role, buffer_per_maint=0):
     """
     Tạo danh sách (time, +1/-1) cho step-chart manpower.
-    Tính toán nhu cầu dựa trên số lượng nhân sự được gán.
-    Mỗi chuyến bay mặc định cần ít nhất 1 người.
-    buffer_per_maint: Số lượng người cần thêm cho các chuyến được đánh dấu MAINT.
+    Tính toán nhu cầu dựa trên:
+    - Mỗi chuyến bay mặc định cần ít nhất 1 người.
+    - Nếu là MAINT: nhu cầu = 1 + buffer_per_maint.
+    - Nếu số người thực tế gán > nhu cầu cơ bản, lấy số người thực tế.
     """
     events = []
     for _, r in df_src.iterrows():
         if pd.notnull(r['START_DT']) and pd.notnull(r['END_DT']):
             # Đếm số lượng nhân sự đã gán
             assigned_names = process_names(str(r[role])) if pd.notnull(r[role]) else []
-            # Nhu cầu = số người đã gán (hoặc 1 nếu trống) + số người dự phòng nếu là MAINT
-            demand = max(len(assigned_names), 1)
+            
+            # Nhu cầu cơ bản (1 người bình thường, hoặc 1 + buffer nếu là MAINT)
+            base_demand = 1
             if r.get('MAINT', False):
-                demand += buffer_per_maint
+                base_demand += buffer_per_maint
+            
+            # Nhu cầu thực tế là giá trị lớn nhất giữa nhu cầu cơ bản và số người đã gán
+            demand = max(base_demand, len(assigned_names))
             
             events.append((r['START_DT'].to_pydatetime(),  demand))
             events.append((r['END_DT'].to_pydatetime(),   -demand))
@@ -690,7 +695,7 @@ if raw_input:
                         report_text += f"   - Tình trạng: Đủ đáp ứng.\n\n"
 
                 report_text += f"{'='*40}\n"
-                report_text += f"Báo cáo được trích xuất từ ducphamv@vietjetair.com"
+                report_text += f"Báo cáo được trích xuất từ ACD DAD v3.57 (Optimized)"
 
                 st.divider()
                 st.subheader("📋 Copy Báo cáo gửi sếp")
