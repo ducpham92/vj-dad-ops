@@ -441,8 +441,8 @@ if raw_input or ('df_final' in st.session_state and not st.session_state.df_fina
             if st.session_state.editor.get('edited_rows'):
                 edited_rows = st.session_state.editor['edited_rows']
                 for idx_str, changes in edited_rows.items():
-                idx = int(idx_str)
-                row_now = df.loc[idx]
+                    idx = int(idx_str)
+                    row_now = df.loc[idx]
                 
                 # Cập nhật giờ nếu có thay đổi
                 def parse_editor_time(time_str, original_dt):
