@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="VJ DAD v1.0 (Optimized)", layout="wide")
+st.set_page_config(page_title="FS VJ DAD (Optimized)", layout="wide")
 
 # 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM (UTC+7)
 now_vn = datetime.now(timezone(timedelta(hours=7))).replace(tzinfo=None)
@@ -267,17 +267,27 @@ def auto_assign_fairly(df, crs_names, mech_names):
         return None
 
     for idx, row in valid_df.iterrows():
-        # --- Phân công CRS ---
-        crs_pool = dedicated_crs | dual_role_staff
-        best_crs = get_best_available(row, crs_pool)
-        
-        if best_crs:
-            df.at[idx, 'CRS_ASSIGN'] = best_crs
-            workload[best_crs]['duration'] += row.get('DURATION', 0)
-            workload[best_crs]['count'] += 1
-            df.at[idx, 'STATUS'] = "🪄 Auto"
+        # --- 1. Phân loại Tuyến Đặc biệt ---
+        # Chuyến BKK-DAD hoặc DAD-BKK chỉ cần MECH, không cần CRS
+        route_str = str(row.get('ROUTE', '')).upper()
+        needs_crs = not any(x in route_str for x in ['BKK-DAD', 'DAD-BKK'])
 
-        # --- Phân công MECH ---
+        # --- 2. Phân công CRS ---
+        best_crs = None
+        if needs_crs:
+            crs_pool = dedicated_crs | dual_role_staff
+            best_crs = get_best_available(row, crs_pool)
+            
+            if best_crs:
+                df.at[idx, 'CRS_ASSIGN'] = best_crs
+                workload[best_crs]['duration'] += row.get('DURATION', 0)
+                workload[best_crs]['count'] += 1
+                df.at[idx, 'STATUS'] = "🪄 Auto"
+        else:
+            df.at[idx, 'CRS_ASSIGN'] = ""
+            df.at[idx, 'STATUS'] = "🇹🇭 ThaiVJ (MECH Only)"
+
+        # --- 3. Phân công MECH ---
         best_mech = None
         
         # Ưu tiên 1: SOLO - Nếu CRS được gán là đa năng, họ sẽ làm luôn MECH
@@ -339,6 +349,54 @@ with st.sidebar:
     buffer_crs = st.number_input("Thêm CRS/chuyến bảo dưỡng:", min_value=0, max_value=3, value=1)
     buffer_mech = st.number_input("Thêm MECH/chuyến bảo dưỡng:", min_value=0, max_value=5, value=2)
 
+    st.divider()
+    st.subheader("🛠️ Tàu Nằm Sân (Ground)")
+    st.caption("Thêm gói bảo dưỡng cho tàu không có lịch bay")
+    with st.form("ground_maint_form", clear_on_submit=True):
+        g_reg = st.text_input("Registration (Reg):", placeholder="VN-A123")
+        g_start = st.text_input("Bắt đầu (HHMM):", placeholder="0800")
+        g_end = st.text_input("Kết thúc (HHMM):", placeholder="1200")
+        g_submit = st.form_submit_button("➕ Thêm Gói Bảo Dưỡng", use_container_width=True)
+        
+        if g_submit and g_reg and g_start and g_end:
+            # Nếu chưa có df_final, khởi tạo một DataFrame trống với các cột cần thiết
+            if 'df_final' not in st.session_state:
+                st.session_state.df_final = pd.DataFrame(columns=[
+                    'STT', 'DATE', 'FLIGHT', 'ROUTE', 'REG', 'START_DT', 'END_DT', 
+                    'DURATION', 'MAINT', 'CRS_ASSIGN', 'MECH_ASSIGN', 'STATUS'
+                ])
+            
+            df = st.session_state.df_final
+            today_str = now_vn.strftime('%d-%b-%Y')
+                
+                def parse_input_time(t_str):
+                    t_str = t_str.replace(':', '')
+                    return datetime.combine(now_vn.date(), datetime.strptime(t_str, '%H%M').time())
+
+                try:
+                    t_s = parse_input_time(g_start)
+                    t_e = parse_input_time(g_end)
+                    if t_e < t_s: t_e += timedelta(days=1)
+                    
+                    new_row = {
+                        'STT': len(df) + 1,
+                        'DATE': today_str,
+                        'FLIGHT': "GROUND",
+                        'ROUTE': "DAD-GROUND",
+                        'REG': g_reg.upper(),
+                        'START_DT': t_s,
+                        'END_DT': t_e,
+                        'DURATION': int((t_e - t_s).total_seconds() / 60),
+                        'MAINT': True,
+                        'CRS_ASSIGN': "",
+                        'MECH_ASSIGN': "",
+                        'STATUS': "🛠️ Ground",
+                    }
+                    st.session_state.df_final = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi nhập thời gian: {e}")
+
     if st.button("🗑️ Reset Toàn Bộ"):
         st.session_state.clear()
         st.rerun()
@@ -347,28 +405,42 @@ with st.sidebar:
 # 3. MAIN
 # ═══════════════════════════════════════════════
 
-st.title("🚀 VJ DAD v1.0 (Optimized)")
+st.title("🚀 FS VJ DAD v1.0 (Optimized)")
 st.caption(f"Giờ hiện tại: {now_vn.strftime('%H:%M:%S')} (ICT) | Nhấn R để cập nhật vạch đỏ")
 
 raw_input = st.text_area("Dán lịch bay...", height=80)
 
-if raw_input:
-    df_raw = parse_raw_data(raw_input)
-    if df_raw is not None:
-
-        if 'df_final' not in st.session_state:
+# Hiển thị chính nếu có dữ liệu (từ dán text hoặc từ ground maintenance)
+if raw_input or ('df_final' in st.session_state and not st.session_state.df_final.empty):
+    
+    if raw_input:
+        df_raw = parse_raw_data(raw_input)
+        if df_raw is not None and 'df_final' not in st.session_state:
             res = df_raw.apply(lambda r: pd.Series(calculate_work_window(r)), axis=1)
             df_raw['START_DT'], df_raw['END_DT'] = res[0], res[1]
             df_raw['CRS_ASSIGN'] = ""; df_raw['MECH_ASSIGN'] = ""; df_raw['STATUS'] = "⚪"
             df_raw['MAINT'] = False  # Cột đánh dấu bảo dưỡng
             st.session_state.df_final = df_raw
 
+    # Lấy dữ liệu từ session_state
+    if 'df_final' in st.session_state:
         df = st.session_state.df_final
 
         # ─── XỬ LÝ CẬP NHẬT TỪ EDITOR (Đưa lên đầu) ────────────────
-        if 'editor' in st.session_state and st.session_state.editor.get('edited_rows'):
-            edited_rows = st.session_state.editor['edited_rows']
-            for idx_str, changes in edited_rows.items():
+        if 'editor' in st.session_state:
+            # Xử lý xóa dòng
+            if st.session_state.editor.get('deleted_rows'):
+                del_indices = st.session_state.editor['deleted_rows']
+                df = df.drop(index=del_indices).reset_index(drop=True)
+                # Cập nhật lại STT
+                df['STT'] = range(1, len(df) + 1)
+                st.session_state.df_final = df
+                st.rerun()
+
+            # Xử lý sửa dòng
+            if st.session_state.editor.get('edited_rows'):
+                edited_rows = st.session_state.editor['edited_rows']
+                for idx_str, changes in edited_rows.items():
                 idx = int(idx_str)
                 row_now = df.loc[idx]
                 
@@ -557,7 +629,7 @@ if raw_input:
         # Tăng chiều cao bảng phân công (ví dụ 600)
         edited = st.data_editor(edit_src, column_config=col_cfg,
                                 hide_index=True, use_container_width=True, key="editor",
-                                height=600)
+                                height=600, num_rows="dynamic")
 
         # Logic cập nhật cũ đã được đưa lên đầu, không cần lặp lại ở đây.
         st.divider()
