@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="FS VJ DAD (Optimized)", layout="wide")
+st.set_page_config(page_title="ACD DAD v3.57 (Optimized)", layout="wide")
 
 # 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM (UTC+7)
 now_vn = datetime.now(timezone(timedelta(hours=7))).replace(tzinfo=None)
@@ -368,34 +368,34 @@ with st.sidebar:
             
             df = st.session_state.df_final
             today_str = now_vn.strftime('%d-%b-%Y')
-                
-                def parse_input_time(t_str):
-                    t_str = t_str.replace(':', '')
-                    return datetime.combine(now_vn.date(), datetime.strptime(t_str, '%H%M').time())
 
-                try:
-                    t_s = parse_input_time(g_start)
-                    t_e = parse_input_time(g_end)
-                    if t_e < t_s: t_e += timedelta(days=1)
-                    
-                    new_row = {
-                        'STT': len(df) + 1,
-                        'DATE': today_str,
-                        'FLIGHT': "GROUND",
-                        'ROUTE': "DAD-GROUND",
-                        'REG': g_reg.upper(),
-                        'START_DT': t_s,
-                        'END_DT': t_e,
-                        'DURATION': int((t_e - t_s).total_seconds() / 60),
-                        'MAINT': True,
-                        'CRS_ASSIGN': "",
-                        'MECH_ASSIGN': "",
-                        'STATUS': "🛠️ Ground",
-                    }
-                    st.session_state.df_final = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Lỗi nhập thời gian: {e}")
+            def parse_input_time(t_str):
+                t_str = t_str.replace(':', '')
+                return datetime.combine(now_vn.date(), datetime.strptime(t_str, '%H%M').time())
+
+            try:
+                t_s = parse_input_time(g_start)
+                t_e = parse_input_time(g_end)
+                if t_e < t_s: t_e += timedelta(days=1)
+                
+                new_row = {
+                    'STT': len(df) + 1,
+                    'DATE': today_str,
+                    'FLIGHT': "GROUND",
+                    'ROUTE': "DAD-GROUND",
+                    'REG': g_reg.upper(),
+                    'START_DT': t_s,
+                    'END_DT': t_e,
+                    'DURATION': int((t_e - t_s).total_seconds() / 60),
+                    'MAINT': True,
+                    'CRS_ASSIGN': "",
+                    'MECH_ASSIGN': "",
+                    'STATUS': "🛠️ Ground",
+                }
+                st.session_state.df_final = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Lỗi nhập thời gian: {e}")
 
     if st.button("🗑️ Reset Toàn Bộ"):
         st.session_state.clear()
@@ -405,7 +405,7 @@ with st.sidebar:
 # 3. MAIN
 # ═══════════════════════════════════════════════
 
-st.title("🚀 FS VJ DAD v1.0 (Optimized)")
+st.title("🚀 ACD DAD v3.57 (Optimized)")
 st.caption(f"Giờ hiện tại: {now_vn.strftime('%H:%M:%S')} (ICT) | Nhấn R để cập nhật vạch đỏ")
 
 raw_input = st.text_area("Dán lịch bay...", height=80)
