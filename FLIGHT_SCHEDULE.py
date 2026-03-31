@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="ACD DAD v3.57 (Optimized)", layout="wide")
+st.set_page_config(page_title="VJ DAD v1.0 (Optimized)", layout="wide")
 
 # 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM (UTC+7)
 now_vn = datetime.now(timezone(timedelta(hours=7))).replace(tzinfo=None)
@@ -214,51 +214,103 @@ def build_step_events(df_src, role, buffer_per_maint=0):
 
 def auto_assign_fairly(df, crs_names, mech_names):
     """
-    Thuật toán phân công thông minh và công bằng hơn:
-    1. Sắp xếp chuyến bay theo thời gian bắt đầu.
-    2. Cân bằng tải dựa trên cả tổng thời gian (Duration) và số lượng chuyến bay (Count).
-    3. Đảm bảo không trùng ca.
+    Thuật toán phân công thông minh, có xét nhân viên đa năng (dual-role):
+    1. Phân loại nhân viên: CRS chuyên trách, MECH chuyên trách, và CRS đa năng (làm được cả MECH).
+    2. Hợp nhất bảng theo dõi tải trọng (workload) cho tất cả nhân viên.
+    3. Sắp xếp chuyến bay theo thời gian bắt đầu.
+    4. Phân công CRS: Chọn người rảnh có tải trọng thấp nhất từ nhóm (CRS chuyên trách + CRS đa năng).
+    5. Phân công MECH (ưu tiên):
+        a. Ưu tiên 1 (SOLO): Nếu CRS vừa được gán là người đa năng, cho họ làm luôn MECH.
+        b. Ưu tiên 2: Tìm MECH chuyên trách rảnh.
+        c. Ưu tiên 3: Tìm một người đa năng khác (không phải CRS đã gán) để làm MECH.
+    6. Kiểm tra xung đột (conflict) sẽ xét trên cả 2 cột CRS_ASSIGN và MECH_ASSIGN.
     """
-    # Chỉ xét những dòng có giờ hợp lệ
-    valid_df = df[df['START_DT'].notna()].sort_values('START_DT').copy()
+    # 1. Phân loại nhân viên
+    crs_set = set(c for c in crs_names if c)
+    mech_set = set(m for m in mech_names if m)
     
-    # Khởi tạo bảng theo dõi tải trọng
-    crs_load = {n: {'duration': 0, 'count': 0} for n in crs_names if n}
-    mech_load = {n: {'duration': 0, 'count': 0} for n in mech_names if n}
+    all_staff = crs_set | mech_set
+    dual_role_staff = crs_set & mech_set
+    dedicated_crs = crs_set - dual_role_staff
+    dedicated_mech = mech_set - dual_role_staff
 
-    def get_best_person(current_row, role_col, load_dict):
+    # 2. Bảng theo dõi tải trọng hợp nhất
+    workload = {name: {'duration': 0, 'count': 0} for name in all_staff}
+    
+    # Chỉ xét những dòng có giờ hợp lệ và reset phân công cũ
+    valid_df = df[df['START_DT'].notna()].sort_values('START_DT').copy()
+    for idx in valid_df.index:
+        df.at[idx, 'CRS_ASSIGN'] = ""
+        df.at[idx, 'MECH_ASSIGN'] = ""
+        df.at[idx, 'STATUS'] = "⚪"
+
+    def get_best_available(current_row, candidates):
         start, end = current_row['START_DT'], current_row['END_DT']
-        # Sắp xếp nhân viên theo tải trọng: duration trước, count sau
-        sorted_names = sorted(load_dict.keys(), 
-                             key=lambda x: (load_dict[x]['duration'], load_dict[x]['count']))
         
-        for name in sorted_names:
-            conflict = df[
-                (df[role_col] == name) & 
+        # Sắp xếp ứng viên theo tải trọng hiện tại
+        sorted_candidates = sorted(list(candidates), key=lambda x: (workload[x]['duration'], workload[x]['count']))
+        
+        for name in sorted_candidates:
+            # Xung đột xảy ra nếu nhân viên đã được gán vào BẤT KỲ vai trò nào
+            # trong một chuyến bay khác có giờ trùng lặp.
+            conflict_df = df[
+                (df.index != current_row.name) &
                 (df['START_DT'] < end) & 
-                (df['END_DT'] > start)
+                (df['END_DT'] > start) &
+                (
+                    df['CRS_ASSIGN'].apply(lambda x: name in process_names(str(x))) |
+                    df['MECH_ASSIGN'].apply(lambda x: name in process_names(str(x)))
+                )
             ]
-            if conflict.empty:
+            if conflict_df.empty:
                 return name
-        return ""
+        return None
 
     for idx, row in valid_df.iterrows():
-        # Phân công CRS
-        best_crs = get_best_person(row, 'CRS_ASSIGN', crs_load)
+        # --- Phân công CRS ---
+        crs_pool = dedicated_crs | dual_role_staff
+        best_crs = get_best_available(row, crs_pool)
+        
         if best_crs:
             df.at[idx, 'CRS_ASSIGN'] = best_crs
+            workload[best_crs]['duration'] += row.get('DURATION', 0)
+            workload[best_crs]['count'] += 1
             df.at[idx, 'STATUS'] = "🪄 Auto"
-            crs_load[best_crs]['duration'] += row.get('DURATION', 0)
-            crs_load[best_crs]['count'] += 1
-            
-        # Phân công MECH
-        best_mech = get_best_person(row, 'MECH_ASSIGN', mech_load)
+
+        # --- Phân công MECH ---
+        best_mech = None
+        
+        # Ưu tiên 1: SOLO - Nếu CRS được gán là đa năng, họ sẽ làm luôn MECH
+        if best_crs and best_crs in dual_role_staff:
+            best_mech = best_crs
+            df.at[idx, 'STATUS'] = "🚀 SOLO"
+        
+        # Ưu tiên 2: Tìm MECH chuyên trách
+        if not best_mech:
+            mech_pool = dedicated_mech
+            best_mech = get_best_available(row, mech_pool)
+
+        # Ưu tiên 3: Tìm người đa năng khác làm MECH
+        if not best_mech:
+            # Loại trừ người đã được gán làm CRS của chuyến này
+            fallback_pool = dual_role_staff - {best_crs}
+            best_mech = get_best_available(row, fallback_pool)
+
         if best_mech:
             df.at[idx, 'MECH_ASSIGN'] = best_mech
-            df.at[idx, 'STATUS'] = "🪄 Auto"
-            mech_load[best_mech]['duration'] += row.get('DURATION', 0)
-            mech_load[best_mech]['count'] += 1
-    
+            # Nếu người làm MECH khác với CRS, mới cộng dồn tải trọng
+            # (tránh cộng 2 lần cho trường hợp SOLO)
+            if best_mech != best_crs:
+                workload[best_mech]['duration'] += row.get('DURATION', 0)
+                workload[best_mech]['count'] += 1
+                # Nếu trạng thái là SOLO (do CRS đa năng), nhưng MECH lại là người khác,
+                # thì không còn là SOLO nữa.
+                if df.at[idx, 'STATUS'] == "🚀 SOLO":
+                     df.at[idx, 'STATUS'] = "🪄 Auto"
+            # Nếu trạng thái chưa được set (tức là ko có CRS nào được gán)
+            elif not df.at[idx, 'CRS_ASSIGN']:
+                 df.at[idx, 'STATUS'] = "🪄 Auto"
+
     return df
 
 
@@ -295,7 +347,7 @@ with st.sidebar:
 # 3. MAIN
 # ═══════════════════════════════════════════════
 
-st.title("🚀 ACD DAD v3.57 (Optimized)")
+st.title("🚀 VJ DAD v1.0 (Optimized)")
 st.caption(f"Giờ hiện tại: {now_vn.strftime('%H:%M:%S')} (ICT) | Nhấn R để cập nhật vạch đỏ")
 
 raw_input = st.text_area("Dán lịch bay...", height=80)
